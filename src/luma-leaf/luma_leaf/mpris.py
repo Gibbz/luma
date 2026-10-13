@@ -7,6 +7,7 @@ next and previous mean a sentence.
 """
 from __future__ import annotations
 
+import os
 import gi
 
 gi.require_version("Gio", "2.0")
@@ -15,7 +16,7 @@ from gi.repository import Gio, GLib
 from .narrator import Narrator, NarratorState
 
 MPRIS_PATH = "/org/mpris/MediaPlayer2"
-MPRIS_NAME = "org.mpris.MediaPlayer2.leaf"
+MPRIS_NAME = "org.mpris.MediaPlayer2.leaf.Standalone" if os.environ.get("LUMA_LEAF_STANDALONE") else "org.mpris.MediaPlayer2.leaf"
 
 INTROSPECTION_XML = """
 <node>

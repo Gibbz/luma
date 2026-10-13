@@ -28,7 +28,7 @@ class SpeechVoices(unittest.TestCase):
         self.client = Dispatcher()
         class Protocol:
             class DataMode: SSML = "ssml"
-            SSIPClient = lambda *_args: self.client
+            SSIPClient = lambda *_args, **_kwargs: self.client
         transport = patch.object(speech, "speechd", Protocol)
         transport.start()
         self.addCleanup(transport.stop)
@@ -72,9 +72,9 @@ class SpeechVoices(unittest.TestCase):
     def test_missing_dispatcher_has_no_fake_voice(self):
         with patch.object(speech, "speechd", None):
             speaker = speech.Speaker()
-        self.assertEqual(speaker.refresh_voices(), [])
-        self.assertFalse(speaker.available)
-        self.assertFalse(speaker.has_neural_voice)
+            self.assertEqual(speaker.refresh_voices(), [])
+            self.assertFalse(speaker.available)
+            self.assertFalse(speaker.has_neural_voice)
 
     def test_restarted_service_reconnects_to_real_registry(self):
         speaker = self.speaker()
@@ -83,7 +83,7 @@ class SpeechVoices(unittest.TestCase):
         replacement = Dispatcher()
         class Protocol:
             class DataMode: SSML = "ssml"
-            SSIPClient = lambda *_args: replacement
+            SSIPClient = lambda *_args, **_kwargs: replacement
         with patch.object(speech, "speechd", Protocol):
             speaker.refresh_voices("piper:ljspeech")
         self.assertTrue(old.closed)
@@ -96,7 +96,7 @@ class SpeechVoices(unittest.TestCase):
         replacement = Dispatcher()
         class Protocol:
             class DataMode: SSML = "ssml"
-            SSIPClient = lambda *_args: replacement
+            SSIPClient = lambda *_args, **_kwargs: replacement
         with patch.object(speech, "speechd", Protocol):
             speaker.refresh_voices()
         self.assertTrue(speaker.available)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sys
 import ctypes
 import threading
 from pathlib import Path
@@ -29,7 +30,7 @@ from .speech import Speaker
 from .store import Library
 from .watch import FolderWatch
 
-APP_ID = "org.projectluma.Leaf.LumaUIPreview" if os.environ.get("LUMA_LEAF_PREVIEW") else "org.projectluma.Leaf"
+APP_ID = "org.projectluma.Leaf.LumaUIPreview" if os.environ.get("LUMA_LEAF_PREVIEW") else ("org.projectluma.Leaf.Standalone" if os.environ.get("LUMA_LEAF_STANDALONE") else "org.projectluma.Leaf")
 ICON_NAME = "org.projectluma.Leaf"
 VERSION = "0.1.0"
 
@@ -491,16 +492,18 @@ class LeafApplication(Adw.Application):
             source = self.library.add_source("calibre" if kind.get_selected() == 0 else "opds",
                                              name.get_text().strip() or urlparse_host(address.get_text()),
                                              address.get_text().strip(), username.get_text().strip())
-            if password.get_text():
-                opds.store_password(source.id, password.get_text())
+            supplied_password = password.get_text()
             self._toast(f"Reading {source.name}…")
 
             def work():
                 worker = Library(self.library.path)
                 try:
+                    if supplied_password:
+                        opds.store_password(source.id, supplied_password)
                     count = opds.refresh(worker, source)
                     GLib.idle_add(self._toast, f"{source.name}: {count} book" + ("" if count == 1 else "s"))
                 except opds.SourceError as error:
+                    worker.set_reachable(source.id, False)
                     GLib.idle_add(self._toast, f"{source.name}: {error}")
                 GLib.idle_add(self._scanned)
 
@@ -619,4 +622,4 @@ def urlparse_host(address: str) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    return LeafApplication().run(argv)
+    return LeafApplication().run(sys.argv if argv is None else argv)

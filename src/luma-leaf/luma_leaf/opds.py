@@ -18,7 +18,7 @@ from pathlib import Path
 import re
 from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin, urlparse
-from urllib.request import Request, urlopen
+from urllib.request import Request, HTTPRedirectHandler, build_opener
 import xml.etree.ElementTree as ET
 
 from .importer import import_file
@@ -66,8 +66,14 @@ def _secret():
 
 
 def store_password(source_id: str, password: str) -> None:
-    Secret, schema = _secret()
-    Secret.password_store_sync(schema, {"source": source_id}, Secret.COLLECTION_DEFAULT, "Leaf library password", password, None)
+    try:
+        Secret, schema = _secret()
+        saved = Secret.password_store_sync(schema, {"source": source_id}, Secret.COLLECTION_DEFAULT,
+                                           "Leaf library password", password, None)
+    except Exception:
+        raise SourceError("The library password could not be saved in the desktop keyring.") from None
+    if not saved:
+        raise SourceError("The library password could not be saved in the desktop keyring.")
 
 
 def password_for(source_id: str) -> str | None:
@@ -97,17 +103,42 @@ def catalogue_url(kind: str, url: str) -> str:
     return url
 
 
-def _fetch(url: str, username: str, password: str | None) -> bytes:
+def _origin(url: str) -> tuple[str, str, int]:
     parsed = urlparse(url)
-    if parsed.scheme not in ("http", "https"):
-        raise SourceError("A library address must start with http:// or https://.")
-    headers = {"User-Agent": "Leaf/0.1 (Project Luma)", "Accept": "application/atom+xml, application/xml;q=0.9, */*;q=0.1"}
-    if username:
+    if parsed.scheme not in ("http", "https") or not parsed.hostname or parsed.username or parsed.password:
+        raise SourceError("A library address must be an HTTP or HTTPS URL without embedded credentials.")
+    try:
+        return parsed.scheme, parsed.hostname.lower(), parsed.port or (443 if parsed.scheme == "https" else 80)
+    except ValueError:
+        raise SourceError("The library address has an invalid port.") from None
+
+
+class _LibraryRedirects(HTTPRedirectHandler):
+    def redirect_request(self, request, response, code, message, headers, newurl):
+        old, new = _origin(request.full_url), _origin(newurl)
+        if old[0] == "https" and new[0] != "https":
+            raise SourceError("The library redirected to an insecure address.")
+        redirected = super().redirect_request(request, response, code, message, headers, newurl)
+        if redirected is not None and old != new:
+            redirected.remove_header("Authorization")
+        return redirected
+
+
+def _fetch(url: str, username: str, password: str | None, *, auth_origin: str | None = None) -> bytes:
+    origin = _origin(url)
+    trusted = _origin(auth_origin or url)
+    if trusted[0] == "https" and origin[0] != "https":
+        raise SourceError("The library linked to an insecure address.")
+    headers = {"User-Agent": "Leaf/0.1 (Luma)", "Accept": "application/atom+xml, application/xml;q=0.9, */*;q=0.1"}
+    if username and origin == trusted:
         token = base64.b64encode(f"{username}:{password or ''}".encode()).decode()
         headers["Authorization"] = f"Basic {token}"
     try:
-        with urlopen(Request(url, headers=headers), timeout=TIMEOUT) as response:
-            return response.read(32 * 1024 * 1024)
+        with build_opener(_LibraryRedirects()).open(Request(url, headers=headers), timeout=TIMEOUT) as response:
+            data = response.read(32 * 1024 * 1024 + 1)
+            if len(data) > 32 * 1024 * 1024:
+                raise SourceError("The library response is too large.")
+            return data
     except HTTPError as error:
         if error.code == 401:
             raise SourceError("The library did not accept this name and password.") from None
@@ -127,7 +158,7 @@ def browse(source: Source) -> list[RemoteBook]:
             continue
         seen.add(url)
         try:
-            feed = ET.fromstring(_fetch(url, source.username, password))
+            feed = ET.fromstring(_fetch(url, source.username, password, auth_origin=start))
         except ET.ParseError:
             continue
         for link in feed.findall(f"{ATOM}link"):
@@ -177,7 +208,7 @@ def refresh(library: Library, source: Source) -> int:
         if remote.cover and not cover:
             target = covers / f"{remote.book_id}.jpg"
             try:
-                target.write_bytes(_fetch(remote.cover, source.username, password))
+                target.write_bytes(_fetch(remote.cover, source.username, password, auth_origin=catalogue_url(source.kind, source.url)))
                 cover = str(target)
             except (SourceError, OSError):
                 cover = None
@@ -207,7 +238,7 @@ def stream(library: Library, book_id: str) -> str:
     target = cache_directory() / "stream" / f"{book_id}.epub"
     target.parent.mkdir(parents=True, exist_ok=True)
     if not target.exists():
-        data = _fetch(book.remote_url, source.username, password_for(source.id))
+        data = _fetch(book.remote_url, source.username, password_for(source.id), auth_origin=catalogue_url(source.kind, source.url))
         temporary = target.with_suffix(".part")
         temporary.write_bytes(data)
         os.replace(temporary, target)

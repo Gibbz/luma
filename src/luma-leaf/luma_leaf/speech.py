@@ -16,6 +16,8 @@ from xml.sax.saxutils import escape
 
 from gi.repository import GLib
 
+from .speech_runtime import connect
+
 try:
     import speechd
 except ImportError:  # the application still reads without a voice
@@ -76,7 +78,7 @@ class Speaker:
             self.error = "Speech isn't available on this computer."
             return
         try:
-            self.client = speechd.SSIPClient("leaf")
+            self.client = connect(speechd)
             self.client.set_data_mode(speechd.DataMode.SSML)
             self.refresh_voices()
         except Exception as error:  # speech-dispatcher not running or not installed
@@ -110,7 +112,7 @@ class Speaker:
                 self.close()
         if self.client is None:
             try:
-                self.client = speechd.SSIPClient("leaf")
+                self.client = connect(speechd)
                 self.client.set_data_mode(speechd.DataMode.SSML)
                 self.error = None
             except Exception as error:
