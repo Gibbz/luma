@@ -78,6 +78,8 @@ class TasksWindow(AppWindow):
                              Command("tasks.new", "New task", self._new, "plus", shortcut=("Ctrl", "N")),
                              Command("tasks.find", "Search tasks", self._find, "search", shortcut=("Ctrl", "F")),
                              Command("tasks.sidebar", "Show or hide sidebar", lambda:self.sidebar_toggle.toggle(), "panel-left"),
+                             *([Command("tasks.accounts", "Accounts…", self._accounts, "user")]
+                               if os.environ.get("LUMA_AGENDA_STANDALONE") else []),
                              Command("tasks.quit", "Quit Tasks", self.close, "log-out", shortcut=("Ctrl", "Q")),
                          )),)), default_width=1180, default_height=740, minimum_width=360)
         self.sidebar = named(NavigationSidebar(variant="destinations"), "tk-sidebar")
@@ -1320,6 +1322,10 @@ class TasksWindow(AppWindow):
 
     def _search(self, value):
         self.query = value; self._main()
+
+    def _accounts(self):
+        from .agenda_accounts import open_settings
+        open_settings(lambda message: Toast.show(self.host, message))
 
     def _find(self):
         if self.phone:

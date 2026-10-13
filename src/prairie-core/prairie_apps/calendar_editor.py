@@ -537,8 +537,11 @@ def run_in_thread(work, done) -> None:
     threading.Thread(target=runner, daemon=True).start()
 
 
-def open_online_accounts() -> bool:
+def open_online_accounts(on_error=None) -> bool:
     """GNOME Online Accounts: where Google, Microsoft and Nextcloud accounts live."""
+    if os.environ.get("LUMA_AGENDA_STANDALONE"):
+        from .agenda_accounts import open_settings
+        return open_settings(on_error or (lambda _message: None))
     for command in (["gnome-control-center", "online-accounts"], ["gnome-online-accounts-gtk"]):
         try:
             subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)

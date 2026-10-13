@@ -517,7 +517,7 @@ def list_events(start: datetime, end: datetime,
             continue
         try:
             client = cal.Client.connect_sync(
-                source, cal.ClientSourceType.EVENTS, timeout, None)
+                source, cal.ClientSourceType.EVENTS, 2**32 - 1, None)
         except Exception:
             continue
         writable = known.writable and not client.is_readonly()
@@ -633,7 +633,9 @@ def _client(source_uid: str, timeout: int = 30):
     if source is None:
         raise ValueError("That calendar is no longer available.")
     try:
-        client = cal.Client.connect_sync(source, cal.ClientSourceType.EVENTS, timeout, None)
+        # EDS uses guint32(-1) to open its cache without waiting for network
+        # connectivity. Backends handle remote sync and offline writes.
+        client = cal.Client.connect_sync(source, cal.ClientSourceType.EVENTS, 2**32 - 1, None)
     except Exception as error:
         raise CalendarUnavailable(f"{source.get_display_name()} could not be opened: {error}") from error
     return client, source, cal, ical

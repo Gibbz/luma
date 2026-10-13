@@ -1485,7 +1485,7 @@ class CalendarWindow(AppWindow):
             self.toast("Subscribe to a calendar")
         else:
             from .calendar_editor import open_online_accounts
-            if not open_online_accounts():
+            if not open_online_accounts(on_error=lambda message: self.toast(message,kind="warning")):
                 self.toast("Calendar account settings could not open",kind="warning")
 
     def task(self,work,done):

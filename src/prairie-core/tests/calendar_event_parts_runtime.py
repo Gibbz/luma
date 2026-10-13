@@ -69,7 +69,7 @@ for width in (360, 500, 720, 1024, 1180):
     assert found and now_ink.red > now_ink.blue, (width, 'current-time marker lost its fixed red ink')
     win.quick.set_text('Lunch with Priya Fri 1pm')
     win.preview_quick(win.quick.text)
-    assert win.quick._chips == ['Fri, Sep 25 · 1 PM'], (width, win.quick._chips)
+    assert win.quick._chips == ['Fri, Sep 25 · 1 PM–2 PM'], (width, win.quick._chips)
     win.new_event(text=win.quick.text)
     settle()
     assert win.editor.submit_on_return
