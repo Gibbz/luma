@@ -250,7 +250,9 @@ class RootDropBoundary(Gtk.ListBoxRow):
 
 class NotesWindow(AppWindow):
     def __init__(self, application: Adw.Application) -> None:
-        self.store = source_from_environment()
+        self.store = (NotesStore(application.notes_store_path)
+                      if getattr(application, 'notes_store_path', None) is not None
+                      else source_from_environment())
         self.fixture = bool(getattr(self.store, "fixture", False))
         self.semantic_root = None
         self.semantic_publisher = None
@@ -277,6 +279,7 @@ class NotesWindow(AppWindow):
         self._sidebar_seen: tuple | None = None
         # How many times a change written elsewhere was taken into this window.
         self.external_refreshes = 0
+        self.account_controller = application
         commands = self._application_commands()
         super().__init__(
             application=application,
@@ -417,6 +420,7 @@ class NotesWindow(AppWindow):
                 Command("notes.search", "Search", self.toggle_search, "system-search-symbolic", shortcut=("Ctrl", "F")),
             ), quick_actions=True),
             CommandGroup("NOTES", (
+                *(getattr(self.account_controller, 'account_commands', lambda _window: ()))(self),
                 Command("notes.about", "About Notes", self._show_about, "help-about-symbolic"),
                 Command("notes.quit", "Quit Notes", self.close, "log-out", shortcut=("Ctrl", "Q")),
             )),

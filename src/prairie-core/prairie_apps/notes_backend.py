@@ -651,6 +651,11 @@ class NotesStore:
 
 def notes_data_directory(environment: dict[str, str] | None = None) -> Path:
     env = os.environ if environment is None else environment
+    if env.get('LUMA_NOTES_DATA_DIR'):
+        directory = Path(env['LUMA_NOTES_DATA_DIR'])
+        if not directory.is_absolute():
+            raise ValueError('Notes data directory must be absolute')
+        return directory
     default = Path(env.get("HOME", str(Path.home()))) / ".local" / "share"
     return Path(env.get("XDG_DATA_HOME", default)) / "luma" / "notes"
 

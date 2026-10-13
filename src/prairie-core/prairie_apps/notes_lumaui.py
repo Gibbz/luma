@@ -191,6 +191,7 @@ class NotesLumaWindow(NotesPhone, NotesWindow):
         return CommandRegistry(groups)
 
     def __init__(self, application):
+        self.independent_account = bool(getattr(application,'notes_independent_account',False))
         self.open_nodes = set()
         self.fixture_sharing = {}
         self._page_mark_subject_id = None
@@ -198,7 +199,7 @@ class NotesLumaWindow(NotesPhone, NotesWindow):
         self._ui_loading = True
         super().__init__(application)
         self._ui_loading = False
-        if not self.fixture:
+        if not self.fixture and not self.independent_account:
             try:
                 from .collaboration import CollaborationCache
                 cache = CollaborationCache()
@@ -1032,7 +1033,7 @@ class NotesLumaWindow(NotesPhone, NotesWindow):
                     if parents.get(child.id) == note.id:
                         leaf(child, depth + 1)
         shared_ids, invitations = set(), []
-        if not self.fixture:
+        if not self.fixture and not self.independent_account:
             try:
                 from .collaboration import CollaborationCache, CollaborationClient
                 client, cache = CollaborationClient(), CollaborationCache(read_only=True)
@@ -1085,7 +1086,7 @@ class NotesLumaWindow(NotesPhone, NotesWindow):
         Thread(target=worker, daemon=True, name='notes-accept-collaboration').start()
 
     def _collaboration_role(self, note_id):
-        if self.fixture:
+        if self.fixture or self.independent_account:
             return 'owner'
         from .connect_sync import connect_data_directory, load_identity
         try:
@@ -1126,7 +1127,7 @@ class NotesLumaWindow(NotesPhone, NotesWindow):
         self._refresh_collaboration_comments()
 
     def _refresh_collaboration_comments(self):
-        if self.fixture or not self.current or not hasattr(self, '_shared_comments'):
+        if self.fixture or self.independent_account or not self.current or not hasattr(self, '_shared_comments'):
             return
         from .collaboration import CollaborationClient, CollaborationCache
         snapshot = None
@@ -1825,7 +1826,7 @@ class NotesLumaWindow(NotesPhone, NotesWindow):
         else:
             from .connect_sync import ConnectError, load_identity
             try:
-                connected = load_identity() is not None
+                connected = not self.independent_account and load_identity() is not None
             except ConnectError:
                 connected = False
                 Toast.show(anchor, 'Live sharing is unavailable. Send a copy or retry when Connect is available.', kind='warning')
