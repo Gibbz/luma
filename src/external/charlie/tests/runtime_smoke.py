@@ -37,9 +37,9 @@ def main() -> int:
                 raise RuntimeError("Charlie window did not map")
             if window.get_title() != "Charlie":
                 raise RuntimeError("Charlie window identity is missing")
-            if window.message_list.get_row_at_index(0) is None:
+            if not window._rows:
                 raise RuntimeError("Demo mailbox did not render")
-            if window.current_conversation is None:
+            if window.thread is None:
                 raise RuntimeError("Conversation selection did not reach reader")
             original_window["value"] = window
             window.close()

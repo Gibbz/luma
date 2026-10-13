@@ -27,7 +27,7 @@ class SecretStore:
         )
 
     def store(self, account_id: str, kind: str, value: str) -> None:
-        self.Secret.password_store_sync(
+        saved = self.Secret.password_store_sync(
             self.schema,
             {"account": account_id, "kind": kind},
             self.Secret.COLLECTION_DEFAULT,
@@ -35,6 +35,8 @@ class SecretStore:
             value,
             None,
         )
+        if not saved:
+            raise RuntimeError("The keyring could not save this credential. Unlock it and try again.")
 
     def lookup(self, account_id: str, kind: str) -> str | None:
         return self.Secret.password_lookup_sync(

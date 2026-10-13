@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<component type="desktop-application">
+  <id>org.projectluma.Charlie</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>Apache-2.0</project_license>
+  <name>Charlie</name>
+  <summary>Read and send email</summary>
+  <description><p>An email client with conversations, multiple accounts, search and drafts. Connect an IMAP and SMTP account or a supported OAuth provider.</p></description>
+  <launchable type="desktop-id">org.projectluma.Charlie.desktop</launchable>
+  <developer id="io.github.nmcmil"><name>nmcmil</name></developer>
+  <url type="homepage">https://github.com/SimplyLuma/luma</url>
+  <content_rating type="oars-1.1"/>
+  <releases><release version="0.2.14" date="2026-10-13"/></releases>
+  <provides><mediatype>message/rfc822</mediatype></provides>
+</component>

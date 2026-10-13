@@ -100,7 +100,7 @@ COMPACT_BREAKPOINT = 699
 
 
 def _data_home() -> Path:
-    if Path("/.flatpak-info").exists():
+    if Path("/.flatpak-info").exists() and os.environ.get("CHARLIE_STANDALONE") != "1":
         # Intentional single shared mailbox dataset; no keyring/config-home grant.
         return Path.home() / ".local/share/charlie"
     root = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
@@ -748,7 +748,7 @@ class CharlieApplication(Adw.Application):
         if style.exists():
             add_style_sheet(str(style))
         self._open_store()
-        if Path("/.flatpak-info").exists():
+        if Path("/.flatpak-info").exists() and os.environ.get("CHARLIE_STANDALONE") != "1":
             from .host_mail_client import Client, Engine
             self.host_client = Client()
             self.engine = Engine(self.host_client)
