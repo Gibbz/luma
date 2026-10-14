@@ -101,9 +101,10 @@ class Helper:
         enrolled = hub.call("/fake/devices", {"account": account})
         self.device = enrolled["device"]
         device_file = self.home / ".local/share/luma/connect/device.json"
-        device_file.write_text(json.dumps({"device_id": enrolled["device"], "token": enrolled["token"], "hub": hub.url,
-                                           "name": name, "registered_at": ""}))
-        device_file.chmod(0o600)
+        self.enrolment={"device_id": enrolled["device"], "token": enrolled["token"], "hub": hub.url}
+        if not os.environ.get("LUMA_MLS_TEST_SEALED_FD"):
+            device_file.write_text(json.dumps({**self.enrolment, "name":name, "registered_at":""}))
+            device_file.chmod(0o600)
         self.key = base64.b64encode(os.urandom(32)).decode()
         self.events: list[tuple[str, dict]] = []
         self.cond = threading.Condition()
@@ -114,8 +115,19 @@ class Helper:
 
     def start(self) -> None:
         env = {"PATH": os.environ.get("PATH", "/usr/bin"), "HOME": str(self.home), "LANG": "C.UTF-8"}
-        self.process = subprocess.Popen([str(self.binary), "--data-dir", str(self.data)], stdin=subprocess.PIPE,
-                                        stdout=subprocess.PIPE, stderr=open(self.stderr, "ab"), env=env)
+        fd=None
+        try:
+            if os.environ.get("LUMA_MLS_TEST_SEALED_FD"):
+                import fcntl
+                fd=os.memfd_create("luma-test",os.MFD_CLOEXEC|os.MFD_ALLOW_SEALING)
+                os.write(fd,json.dumps(self.enrolment).encode());os.lseek(fd,0,os.SEEK_SET)
+                fcntl.fcntl(fd,fcntl.F_ADD_SEALS,fcntl.F_SEAL_WRITE|fcntl.F_SEAL_GROW|fcntl.F_SEAL_SHRINK|fcntl.F_SEAL_SEAL)
+                env["LUMA_MESSAGES_ENROLMENT_FD"]=str(fd)
+            self.process = subprocess.Popen([str(self.binary), "--data-dir", str(self.data)], stdin=subprocess.PIPE,
+                                        stdout=subprocess.PIPE, stderr=open(self.stderr, "ab"), env=env,
+                                        pass_fds=(fd,) if fd is not None else ())
+        finally:
+            if fd is not None:os.close(fd)
         threading.Thread(target=self._read, args=(self.process,), daemon=True).start()
         hello = self.call("hello", {"protocol": "luma-messages-bridge/1"})
         assert hello["network"] == "luma" and hello["capabilities"]["encrypted"], hello

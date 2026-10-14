@@ -288,6 +288,20 @@ class ProviderTest(AccountsCase):
         self.assertFalse(provider.sms_transport().inspect().available)
         self.assertIn("Unlock your keyring", provider.sms_transport().inspect().reason)
 
+    def test_locked_enrolment_lookup_does_not_leave_the_account_connecting(self):
+        from prairie_apps.messages_accounts import BridgeProcess
+        account = self.sign_in()
+        original = BridgeProcess.credential_loader
+        self.addCleanup(setattr, BridgeProcess, "credential_loader", original)
+        def locked(_executable):
+            raise KeyringLocked("locked enrolment")
+        BridgeProcess.credential_loader = staticmethod(locked)
+        provider, states = self.provider(account)
+        wait(lambda: provider.status.get("network_state") == "keyring", "locked enrolment state")
+        self.assertIsNone(provider._process)
+        self.assertFalse(provider.sms_transport().inspect().available)
+        self.assertIn("keyring", [state["network_state"] for state in states])
+
     def test_signed_out_elsewhere_asks_to_sign_in_again(self):
         account = self.sign_in()
         self.secrets.items.clear()

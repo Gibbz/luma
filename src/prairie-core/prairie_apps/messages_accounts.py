@@ -256,7 +256,14 @@ class AccountStore(MessageStore):
         device-change state from the helper; other networks leave it empty."""
         columns = {row[1] for row in self._connection.execute("PRAGMA table_info(conversations)")}
         if "luma" not in columns:
-            self._connection.execute("ALTER TABLE conversations ADD COLUMN luma TEXT NOT NULL DEFAULT ''")
+            try:
+                self._connection.execute("ALTER TABLE conversations ADD COLUMN luma TEXT NOT NULL DEFAULT ''")
+            except sqlite3.OperationalError:
+                # Another connection may have completed this migration after
+                # the schema read. Other migration failures still propagate.
+                columns = {row[1] for row in self._connection.execute("PRAGMA table_info(conversations)")}
+                if "luma" not in columns:
+                    raise
             self._connection.commit()
 
     def luma_flags(self, conversation: str) -> dict:
@@ -1029,6 +1036,8 @@ class BridgeError(Exception):
 class BridgeProcess:
     """One helper process: numbered commands, results matched by id, events to a callback."""
 
+    credential_loader = None
+
     def __init__(self, executable: Path, data_dir: Path, on_event, *, on_exit=lambda code: None) -> None:
         self.executable, self.data_dir = Path(executable), Path(data_dir)
         self.on_event, self.on_exit = on_event, on_exit
@@ -1039,10 +1048,28 @@ class BridgeProcess:
 
     def start(self) -> None:
         environment = {key: os.environ[key] for key in ("PATH", "LANG", "LC_ALL", "TZ", "HOME", "XDG_RUNTIME_DIR",
-                                                        "LUMA_MESSAGES_OUTBOUND") if key in os.environ}
-        self._process = subprocess.Popen(
-            [str(self.executable), "--data-dir", str(self.data_dir)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE, cwd=self.data_dir, env=environment, start_new_session=True)
+                                                        "LUMA_MESSAGES_OUTBOUND", "SSL_CERT_FILE") if key in os.environ}
+        credential_fd = None
+        try:
+            loader = type(self).credential_loader
+            credential = loader(self.executable) if loader is not None else None
+            if credential is not None:
+                import fcntl
+                if not isinstance(credential, dict):raise KeyringLocked("Invalid account credential")
+                encoded=json.dumps(credential,allow_nan=False).encode("utf-8")
+                if len(encoded)>65536:raise KeyringLocked("Account credential is too large")
+                credential_fd=os.memfd_create("luma-connect",os.MFD_CLOEXEC|os.MFD_ALLOW_SEALING)
+                position=0
+                while position<len(encoded):position+=os.write(credential_fd,encoded[position:])
+                os.lseek(credential_fd,0,os.SEEK_SET)
+                fcntl.fcntl(credential_fd,fcntl.F_ADD_SEALS,fcntl.F_SEAL_WRITE|fcntl.F_SEAL_GROW|fcntl.F_SEAL_SHRINK|fcntl.F_SEAL_SEAL)
+                environment["LUMA_MESSAGES_ENROLMENT_FD"]=str(credential_fd)
+            self._process = subprocess.Popen(
+                [str(self.executable), "--data-dir", str(self.data_dir)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE, cwd=self.data_dir, env=environment, start_new_session=True,
+                pass_fds=(credential_fd,) if credential_fd is not None else ())
+        finally:
+            if credential_fd is not None:os.close(credential_fd)
         threading.Thread(target=self._read, daemon=True, name="messages-bridge-read").start()
         threading.Thread(target=self._drain_log, daemon=True, name="messages-bridge-log").start()
 
@@ -1467,7 +1494,9 @@ class AccountProvider:
             process.request("connect", {})
             if self.status.get("network_state") == "connecting":
                 self._watch_recovery(CONNECT_SECONDS)
-        except (BridgeError, OSError) as error:
+        except KeyringLocked:
+            process.stop();self._process=None;self._set_state("keyring")
+        except (BridgeError, OSError, AttributeError) as error:
             log.info("%s helper did not start: %s", self.account.network, getattr(error, "code", type(error).__name__))
             process.stop()
             self._process = None

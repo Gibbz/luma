@@ -37,7 +37,7 @@ def unpack(value):
 
 
 def sandboxed():
-    return Path('/.flatpak-info').is_file()
+    return Path('/.flatpak-info').is_file() and os.environ.get('LUMA_MESSAGES_STANDALONE')!='1'
 
 
 def cache_directory():

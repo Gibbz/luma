@@ -247,7 +247,9 @@ class MessagesSurface:
         adjustment.connect("notify::upper", self._thread_resized)
         adjustment.connect("notify::page-size", self._thread_resized)
         self.body.append(self.scroller)
-        layered = Gtk.Overlay(child=self.light, hexpand=True, vexpand=True)
+        layered = Gtk.Overlay(child=Gtk.Box(hexpand=True, vexpand=True), hexpand=True, vexpand=True)
+        layered.add_overlay(self.light)
+        layered.set_measure_overlay(self.light, False)
         layered.add_overlay(self.body)
         layered.set_measure_overlay(self.body, True)
         self.empty = EmptyState('Your messages, together',

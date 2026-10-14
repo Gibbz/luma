@@ -90,6 +90,11 @@ pub fn hub_origin(value: &str) -> Result<String, String> {
 }
 
 pub fn load_enrolment(path: &Path) -> Result<Option<Enrolment>, String> {
+    if let Some(value) = std::env::var_os("LUMA_MESSAGES_ENROLMENT_FD") {
+        let number = value.to_str().and_then(|v| v.parse::<i32>().ok())
+            .filter(|fd| *fd >= 3).ok_or("invalid credential descriptor")?;
+        return load_sealed_enrolment(number).map(Some);
+    }
     use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
     // Validate and read the same descriptor: no path-following or replacement
     // race, and no FIFO/device open that could block the helper.
@@ -121,6 +126,37 @@ pub fn load_enrolment(path: &Path) -> Result<Option<Enrolment>, String> {
     Ok(Some(Enrolment { hub: hub_origin(&hub)?, token, device }))
 }
 
+/// An inherited, immutable memory file keeps a standalone credential out of
+/// arguments, environment values and persistent files. Invalid descriptors
+/// fail closed and never fall back to a device file.
+fn load_sealed_enrolment(fd: i32) -> Result<Enrolment, String> {
+    use std::os::fd::FromRawFd;
+    use std::os::unix::fs::MetadataExt;
+    let seals = unsafe { libc::fcntl(fd, libc::F_GET_SEALS) };
+    let required = libc::F_SEAL_WRITE | libc::F_SEAL_GROW | libc::F_SEAL_SHRINK | libc::F_SEAL_SEAL;
+    if seals < 0 || seals & required != required { return Err("credential descriptor is not sealed".into()); }
+    let duplicate = unsafe { libc::dup(fd) };
+    if duplicate < 0 { return Err("credential descriptor unavailable".into()); }
+    let file = unsafe { std::fs::File::from_raw_fd(duplicate) };
+    let meta = file.metadata().map_err(|_| "credential descriptor unavailable")?;
+    if !meta.is_file() || meta.uid() != unsafe { libc::geteuid() } || meta.nlink() != 0 || meta.len() > 65536 {
+        return Err("invalid credential memory file".into());
+    }
+    if unsafe { libc::lseek(duplicate, 0, libc::SEEK_SET) } < 0 { return Err("credential descriptor is not seekable".into()); }
+    let mut bytes = Vec::new();
+    file.take(65537).read_to_end(&mut bytes).map_err(|_| "credential descriptor could not be read")?;
+    if bytes.len() > 65536 { return Err("credential is too large".into()); }
+    let data: Value = serde_json::from_slice(&bytes).map_err(|_| "invalid credential record")?;
+    let get = |key: &str| data.get(key).and_then(Value::as_str).unwrap_or("").to_owned();
+    let hub = hub_origin(&get("hub"))?;
+    let token = get("token"); let device = get("device_id");
+    if token.is_empty() || token.len() > 16384 || !token.bytes().all(|b| (33..=126).contains(&b))
+        || device.is_empty() || device.len() > 128 || !device.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
+        return Err("invalid credential record".into());
+    }
+    Ok(Enrolment { hub, token, device })
+}
+
 fn validate_device_metadata(meta: &std::fs::Metadata, uid: u32) -> Result<(), String> {
     use std::os::unix::fs::MetadataExt;
     if !meta.is_file() || meta.uid() != uid || meta.mode() & 0o077 != 0 {
@@ -139,6 +175,7 @@ pub struct Hub {
 
 fn agent(read_timeout: Duration) -> ureq::Agent {
     let mut builder = ureq::AgentBuilder::new()
+        .redirects(0)
         .timeout_connect(Duration::from_secs(15))
         .timeout_read(read_timeout)
         .timeout_write(Duration::from_secs(60))
@@ -303,6 +340,39 @@ mod tests {
         std::fs::write(&path, vec![b' '; 65537]).unwrap();
         assert!(load_enrolment(&path).is_err());
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn sealed_credential_descriptor_is_immutable_and_bounded() {
+        use std::io::Write;
+        use std::os::fd::{AsRawFd, FromRawFd};
+        let name = std::ffi::CString::new("luma-test").unwrap();
+        let fd = unsafe { libc::memfd_create(name.as_ptr(), libc::MFD_CLOEXEC | libc::MFD_ALLOW_SEALING) };
+        assert!(fd >= 3);
+        let mut file = unsafe { std::fs::File::from_raw_fd(fd) };
+        file.write_all(br#"{"hub":"https://hub.example","token":"test-token","device_id":"0b7e3a52-8c1d-4f6e-9a20-3d5c7b1e9f04"}"#).unwrap();
+        assert!(load_sealed_enrolment(fd).is_err());
+        let seals = libc::F_SEAL_WRITE | libc::F_SEAL_GROW | libc::F_SEAL_SHRINK | libc::F_SEAL_SEAL;
+        assert_eq!(unsafe { libc::fcntl(fd, libc::F_ADD_SEALS, seals) }, 0);
+        assert_eq!(load_sealed_enrolment(fd).unwrap().token, "test-token");
+        assert_eq!(load_sealed_enrolment(fd).unwrap().hub, "https://hub.example");
+        assert!(file.write_all(b"replacement").is_err());
+        assert!(load_sealed_enrolment(-1).is_err());
+        assert_eq!(file.as_raw_fd(),fd);
+    }
+
+    #[test]
+    fn sealed_credential_descriptor_rejects_oversized_input() {
+        use std::io::Write;
+        use std::os::fd::FromRawFd;
+        let name = std::ffi::CString::new("luma-test").unwrap();
+        let fd = unsafe { libc::memfd_create(name.as_ptr(), libc::MFD_CLOEXEC | libc::MFD_ALLOW_SEALING) };
+        assert!(fd >= 3);
+        let mut file = unsafe { std::fs::File::from_raw_fd(fd) };
+        file.write_all(&vec![b'x';65537]).unwrap();
+        let seals = libc::F_SEAL_WRITE | libc::F_SEAL_GROW | libc::F_SEAL_SHRINK | libc::F_SEAL_SEAL;
+        assert_eq!(unsafe { libc::fcntl(fd, libc::F_ADD_SEALS, seals) },0);
+        assert!(load_sealed_enrolment(fd).is_err());
     }
 
 }
