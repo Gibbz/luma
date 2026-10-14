@@ -397,7 +397,8 @@ class VoiceMemosWindow(AppWindow):
             return
         self.title_island.set_status(("paused" if self.record_paused else "record") if self.recording else None)
         if self.recording:
-            self.title_island.set_title("New memo", f"{'Paused' if self.record_paused else 'Recording'} · Studio")
+            source = "Studio" if self.fixture else getattr(self.session, "source_label", "Microphone")
+            self.title_island.set_title("New memo", f"{'Paused' if self.record_paused else 'Recording'} · {source}")
         else:
             self.title_island.set_title(memo.title, f"{memo.when} · {format_duration(memo.duration)}")
 
@@ -648,7 +649,7 @@ class VoiceMemosWindow(AppWindow):
             self.subheading.set_label("Listening" if not self.record_paused else "Paused")
             self.subheading.set_visible(not in_island)
             self.deck.show_recording(self.record_elapsed, tuple(self.live_peaks))
-            self.transcript.set_visible(True)
+            self.transcript.set_visible(bool(self.live_words))
             self.transcript.show_live(tuple(self.live_words))
             self._set_corner(None)
             return
@@ -778,6 +779,32 @@ class VoiceMemosWindow(AppWindow):
             self.foot.entry.grab_focus()
 
     def _focus_title(self) -> None:
+        if self.phone:
+            memo=self._find()
+            if memo is None or self.recording:return
+            from luma_appkit import Card, LayerHost, TextButton
+            card=Card(padded=True);card.add_css_class("lumaui-dialog")
+            card.set_margin_start(16);card.set_margin_end(16);card.set_margin_bottom(16)
+            card.append(apply_type(Gtk.Label(label="Rename recording",xalign=0),"title-1"))
+            entry=Gtk.Entry(text=memo.title,placeholder_text="Recording name",margin_top=12)
+            entry.set_max_length(240);card.append(entry)
+            buttons=Gtk.Box(spacing=8,homogeneous=True,margin_top=16)
+            cancel=TextButton("Cancel",style="fill",size="touch")
+            save=TextButton("Rename",style="key",size="touch")
+            buttons.append(cancel);buttons.append(save);card.append(buttons)
+            save.set_sensitive(bool(entry.get_text().strip()))
+            entry.connect("changed",lambda field:save.set_sensitive(bool(field.get_text().strip())))
+            def commit(*_):
+                text=entry.get_text().strip()
+                if not text or len(text.encode("utf-8"))>240 or "/" in text or "\\" in text:
+                    Toast.show(self.host,"Use a shorter name without slashes.",kind="warning");return
+                selected=self._find()
+                if selected is None or selected.id!=memo.id:
+                    handle.close();Toast.show(self.host,"Choose the recording again before renaming it.",kind="warning");return
+                handle.close();self._rename(text)
+            handle=LayerHost.window_host(self).present_modal(card,drawer=True)
+            cancel.connect("clicked",lambda *_:handle.close());save.connect("clicked",commit);entry.connect("activate",commit)
+            return
         self.title_field.set_editable_title(True)
         self.title_holder.set_visible_child_name("edit")
         self.title_field.grab_focus()
