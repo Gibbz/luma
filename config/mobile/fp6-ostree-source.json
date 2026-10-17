@@ -1,0 +1,29 @@
+{
+  "version": "2026.5",
+  "release": "1.luma.2",
+  "source_tree_sha256": "840c139c8508ef6aeb6443392ea5728cb62688c4220d44e129a393ece2346bc3",
+  "source_entries": 884,
+  "archives": [
+    {
+      "name": "ostree",
+      "revision": "a03c4c53a9c02a792775fcff0165fa29e3adc785",
+      "url": "https://codeload.github.com/ostreedev/ostree/tar.gz/a03c4c53a9c02a792775fcff0165fa29e3adc785",
+      "sha256": "520bd8ead4dd3ae749bda95fa6d069136a90939ca20035848da576718154c142",
+      "destination": "."
+    },
+    {
+      "name": "libglnx",
+      "revision": "b415d046880d585e5161bf230590543adeea4fe6",
+      "url": "https://codeload.github.com/GNOME/libglnx/tar.gz/b415d046880d585e5161bf230590543adeea4fe6",
+      "sha256": "f4ca1b2dcc5e7902dac3b11e381e75d2fa47aa40a73fb3de201a7cc6f718798d",
+      "destination": "libglnx"
+    },
+    {
+      "name": "bsdiff",
+      "revision": "b817e9491cf7b8699c8462ef9e2657ca4ccd7667",
+      "url": "https://codeload.github.com/mendsley/bsdiff/tar.gz/b817e9491cf7b8699c8462ef9e2657ca4ccd7667",
+      "sha256": "7bf052085968119a1ef6d9dedf80e0b01669f2f383e6179f510f851af2cc6e94",
+      "destination": "bsdiff"
+    }
+  ]
+}

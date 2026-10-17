@@ -1,0 +1,277 @@
+--- a/src/libostree/ostree-bootloader-aboot.c
++++ b/src/libostree/ostree-bootloader-aboot.c
+@@ -23,6 +23,13 @@
+ #include "ostree-sysroot-private.h"
+ #include "otutil.h"
+ #include <sys/mount.h>
++#include <fcntl.h>
++#include <unistd.h>
++#include <glib/gstdio.h>
++#ifdef HAVE_LIBARCHIVE
++#include <archive.h>
++#include <archive_entry.h>
++#endif
+ 
+ #include <string.h>
+ 
+@@ -80,7 +87,7 @@
+ static gboolean
+ _ostree_aboot_get_bls_config (OstreeBootloaderAboot *self, int bootversion, gchar **aboot,
+                               gchar **abootcfg, gchar **version, gchar **vmlinuz, gchar **initramfs,
+-                              gchar **options, GCancellable *cancellable, GError **error)
++                              gchar **options, gchar ***overlays, GCancellable *cancellable, GError **error)
+ {
+   g_autoptr (GPtrArray) configs = NULL;
+   if (!_ostree_sysroot_read_boot_loader_configs (self->sysroot, bootversion, &configs, cancellable,
+@@ -115,17 +122,18 @@
+   val = ostree_bootconfig_parser_get (parser, "linux");
+   if (!val)
+     return glnx_throw (error, "aboot: no \"linux\" key in bootloader config");
+-  *vmlinuz = g_build_filename ("/boot", val, NULL);
++  *vmlinuz = g_strdup (val);
+ 
+   val = ostree_bootconfig_parser_get (parser, "initrd");
+   if (!val)
+     return glnx_throw (error, "aboot: no \"initrd\" key in bootloader config");
+-  *initramfs = g_build_filename ("/boot", val, NULL);
++  *initramfs = g_strdup (val);
+ 
+   val = ostree_bootconfig_parser_get (parser, "options");
+   if (!val)
+     return glnx_throw (error, "aboot: no \"options\" key in bootloader config");
+   *options = g_strdup (val);
++  *overlays = g_strdupv (ostree_bootconfig_parser_get_overlay_initrds (parser));
+ 
+   return TRUE;
+ }
+@@ -136,6 +144,204 @@
+   int fd = (int)(uintptr_t)data;
+   int rc = fchdir (fd);
+   g_assert (rc == 0);
++}
++
++/* Build from the selected BLS kernel and every ordered initrd. Tracked /etc
++ * overlays must not be lost by flashing the immutable tree's prebuilt image. */
++typedef struct
++{
++  char *directory;
++  char *kernel;
++  char *initrd;
++  char *image;
++} AbootEffectiveImage;
++
++static void
++aboot_effective_image_clear (AbootEffectiveImage *image)
++{
++  if (image->image) g_unlink (image->image);
++  if (image->initrd) g_unlink (image->initrd);
++  if (image->kernel) g_unlink (image->kernel);
++  if (image->directory) g_rmdir (image->directory);
++  g_free (image->image);
++  g_free (image->initrd);
++  g_free (image->kernel);
++  g_free (image->directory);
++}
++G_DEFINE_AUTO_CLEANUP_CLEAR_FUNC (AbootEffectiveImage, aboot_effective_image_clear)
++
++static gboolean
++aboot_safe_absolute_path (const char *path)
++{
++  if (!path || path[0] != '/' || path[1] == '\0') return FALSE;
++  g_auto (GStrv) parts = g_strsplit (path + 1, "/", -1);
++  for (char **part = parts; *part; part++)
++    if (!**part || g_str_equal (*part, ".") || g_str_equal (*part, "..")) return FALSE;
++  return TRUE;
++}
++
++static gboolean
++aboot_append_file (const char *path, int output, GError **error)
++{
++  glnx_autofd int input = open (path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
++  if (input < 0) return glnx_throw_errno_prefix (error, "aboot: open selected input");
++  struct stat st;
++  if (fstat (input, &st) < 0) return glnx_throw_errno_prefix (error, "aboot: stat input");
++  if (!S_ISREG (st.st_mode) || st.st_size == 0)
++    return glnx_throw (error, "aboot: selected input is not a nonempty regular file");
++  char buffer[65536];
++  while (TRUE)
++    {
++      ssize_t count = TEMP_FAILURE_RETRY (read (input, buffer, sizeof buffer));
++      if (count < 0) return glnx_throw_errno_prefix (error, "aboot: read input");
++      if (count == 0) return TRUE;
++      for (ssize_t offset = 0; offset < count;)
++        {
++          ssize_t written = TEMP_FAILURE_RETRY (write (output, buffer + offset, count - offset));
++          if (written <= 0) return glnx_throw_errno_prefix (error, "aboot: write effective input");
++          offset += written;
++        }
++    }
++}
++
++static char *
++aboot_bls_host_path (const char *sysroot, const char *path)
++{
++  /* BLS paths may include /boot when OSTree's bootprefix is enabled. */
++  return g_build_filename (sysroot, g_str_has_prefix (path, "/boot/") ? "" : "boot",
++                           path, NULL);
++}
++
++/* rpm-ostree appends its tracked-/etc cpio as the final BLS overlay. Check
++ * the actual archive, not a sibling /etc file or an unbound status list. */
++static gboolean
++aboot_verify_recipient_overlay (const char *sysroot, const char *deployment,
++                                 char **overlays, GError **error)
++{
++  g_autofree char *expected_path = g_build_filename (
++      deployment, "usr/lib/luma/fp6-firmware-manifest.sha256", NULL);
++  struct stat st;
++  if (lstat (expected_path, &st) < 0)
++    {
++      if (errno == ENOENT) return TRUE; /* Generic aboot; FP6 deploy guard requires it. */
++      return glnx_throw_errno_prefix (error, "aboot: firmware requirement");
++    }
++  if (!S_ISREG (st.st_mode) || st.st_size != 65)
++    return glnx_throw (error, "aboot: invalid immutable firmware requirement");
++  g_autofree char *expected = NULL;
++  gsize expected_size = 0;
++  if (!g_file_get_contents (expected_path, &expected, &expected_size, error)) return FALSE;
++  if (expected_size != 65 || expected[64] != '\n')
++    return glnx_throw (error, "aboot: invalid firmware digest encoding");
++  for (int i = 0; i < 64; i++)
++    if (!(g_ascii_isdigit (expected[i]) || (expected[i] >= 'a' && expected[i] <= 'f')))
++      return glnx_throw (error, "aboot: invalid firmware digest");
++  if (!overlays || !*overlays)
++    return glnx_throw (error, "aboot: recipient firmware requires tracked initrd overlay");
++#ifndef HAVE_LIBARCHIVE
++  return glnx_throw (error, "aboot: firmware overlay validation requires libarchive");
++#else
++  g_autofree char *path = aboot_bls_host_path (sysroot, overlays[g_strv_length (overlays) - 1]);
++  struct archive *archive = archive_read_new ();
++  if (!archive) return glnx_throw (error, "aboot: cannot allocate archive reader");
++  archive_read_support_filter_all (archive);
++  archive_read_support_format_cpio (archive);
++  gboolean valid = FALSE;
++  guint anchors = 0;
++  if (archive_read_open_filename (archive, path, 65536) != ARCHIVE_OK) goto out;
++  struct archive_entry *entry;
++  int status;
++  while ((status = archive_read_next_header (archive, &entry)) == ARCHIVE_OK)
++    {
++      const char *name = archive_entry_pathname (entry);
++      if (!name || name[0] == '/') goto out;
++      const char *relative = g_str_has_prefix (name, "./") ? name + 2 : name;
++      if (strstr (relative, "../") || g_str_has_suffix (relative, "/..")
++          || strstr (relative, "//") || strstr (relative, "/./")) goto out;
++      if (g_str_equal (name, "etc/luma-fp6-firmware-manifest.sha256")
++          || g_str_equal (name, "./etc/luma-fp6-firmware-manifest.sha256"))
++        {
++          if (++anchors != 1 || archive_entry_filetype (entry) != AE_IFREG
++              || archive_entry_uid (entry) != 0 || archive_entry_gid (entry) != 0
++              || archive_entry_perm (entry) != 0644 || archive_entry_size (entry) != 65
++              || archive_entry_hardlink (entry) || archive_entry_symlink (entry)) goto out;
++          char data[66];
++          size_t total = 0;
++          while (total < 65)
++            {
++              la_ssize_t bytes = archive_read_data (archive, data + total, 65 - total);
++              if (bytes <= 0) goto out;
++              total += bytes;
++            }
++          if (memcmp (data, expected, 65) != 0 || archive_read_data (archive, data, 1) != 0)
++            goto out;
++        }
++      else if (archive_read_data_skip (archive) != ARCHIVE_OK) goto out;
++    }
++  valid = status == ARCHIVE_EOF && anchors == 1;
++ out:
++  if (archive_read_close (archive) != ARCHIVE_OK) valid = FALSE;
++  archive_read_free (archive);
++  if (!valid) return glnx_throw (error, "aboot: final tracked initrd lacks the exact recipient firmware anchor");
++  return TRUE;
++#endif
++}
++
++static gboolean
++aboot_build_effective_image (const char *sysroot, const char *config,
++                              const char *kernel, const char *initrd, char **overlays,
++                              const char *options, AbootEffectiveImage *image, GError **error)
++{
++  const char suffix[] = "/usr/lib/ostree-boot/aboot.cfg";
++  if (!aboot_safe_absolute_path (config) || !g_str_has_prefix (config, "/ostree/deploy/")
++      || !g_str_has_suffix (config, suffix) || !aboot_safe_absolute_path (kernel)
++      || !aboot_safe_absolute_path (initrd))
++    return glnx_throw (error, "aboot: invalid selected deployment paths");
++  for (char **it = overlays; it && *it; it++)
++    if (!aboot_safe_absolute_path (*it))
++      return glnx_throw (error, "aboot: invalid overlay initrd path");
++  g_autofree char *kernel_name = g_path_get_basename (kernel);
++  if (!g_str_has_prefix (kernel_name, "vmlinuz-") || !kernel_name[8])
++    return glnx_throw (error, "aboot: selected kernel lacks a kernel version");
++  const char *kernel_version = kernel_name + 8;
++  g_autofree char *deployment = g_strndup (config, strlen (config) - strlen (suffix));
++  g_autofree char *deployment_host = g_build_filename (sysroot, deployment, NULL);
++  g_autofree char *config_host = g_build_filename (sysroot, config, NULL);
++  if (!aboot_verify_recipient_overlay (sysroot, deployment_host, overlays, error)) return FALSE;
++  image->directory = g_build_filename (sysroot, "boot/ostree/.aboot-effective-XXXXXX", NULL);
++  if (!g_mkdtemp (image->directory))
++    return glnx_throw_errno_prefix (error, "aboot: create effective image directory");
++  image->kernel = g_build_filename (image->directory, "vmlinuz", NULL);
++  image->initrd = g_build_filename (image->directory, "initramfs.img", NULL);
++  g_autofree char *image_name = g_strdup_printf ("aboot-%s.img", kernel_version);
++  image->image = g_build_filename (image->directory, image_name, NULL);
++  glnx_autofd int kernel_fd = open (image->kernel, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
++  if (kernel_fd < 0) return glnx_throw_errno_prefix (error, "aboot: create kernel input");
++  g_autofree char *kernel_host = aboot_bls_host_path (sysroot, kernel);
++  if (!aboot_append_file (kernel_host, kernel_fd, error)) return FALSE;
++  if (fsync (kernel_fd) < 0) return glnx_throw_errno_prefix (error, "aboot: sync kernel input");
++  glnx_autofd int initrd_fd = open (image->initrd, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
++  if (initrd_fd < 0) return glnx_throw_errno_prefix (error, "aboot: create initrd input");
++  g_autofree char *initrd_host = aboot_bls_host_path (sysroot, initrd);
++  if (!aboot_append_file (initrd_host, initrd_fd, error)) return FALSE;
++  for (char **it = overlays; it && *it; it++)
++    {
++      g_autofree char *path = aboot_bls_host_path (sysroot, *it);
++      if (!aboot_append_file (path, initrd_fd, error)) return FALSE;
++    }
++  if (fsync (initrd_fd) < 0) return glnx_throw_errno_prefix (error, "aboot: sync effective initrd");
++  const char *const argv[] = { "aboot-update", "--root", deployment_host, "--config", config_host,
++    "--kernel-dir", image->directory, "--out", image->directory, "--cmdline", options,
++    kernel_version, NULL };
++  int status;
++  if (!g_spawn_sync (NULL, (char **)argv, NULL, G_SPAWN_SEARCH_PATH, NULL, NULL,
++                     NULL, NULL, &status, error) || !g_spawn_check_wait_status (status, error))
++    return FALSE;
++  struct stat st;
++  if (lstat (image->image, &st) < 0) return glnx_throw_errno_prefix (error, "aboot: stat rebuilt image");
++  if (!S_ISREG (st.st_mode) || st.st_size == 0)
++    return glnx_throw (error, "aboot: rebuilt image is missing or empty");
++  return TRUE;
+ }
+ 
+ static gboolean
+@@ -163,12 +369,23 @@
+   g_autofree gchar *vmlinuz = NULL;
+   g_autofree gchar *initramfs = NULL;
+   g_autofree gchar *options = NULL;
++  g_auto (GStrv) overlays = NULL;
+   if (!_ostree_aboot_get_bls_config (self, bootversion, &aboot, &abootcfg, &version, &vmlinuz,
+-                                     &initramfs, &options, cancellable, error))
++                                     &initramfs, &options, &overlays, cancellable, error))
+     return FALSE;
+ 
++  g_autofree char *sysroot = g_file_get_path (ostree_sysroot_get_path (self->sysroot));
++  if (!sysroot || !g_path_is_absolute (sysroot))
++    return glnx_throw (error, "aboot: sysroot has no absolute native path");
++  g_auto (AbootEffectiveImage) effective = { 0 };
++  if (!aboot_build_effective_image (sysroot, abootcfg, vmlinuz, initramfs, overlays,
++                                     options, &effective, error))
++    return FALSE;
++  g_autofree char *directory_name = g_path_get_basename (effective.directory);
++  g_autofree char *image_name = g_path_get_basename (effective.image);
++  g_autofree char *effective_boot_path = g_build_filename ("/ostree", directory_name, image_name, NULL);
+   const char *const aboot_argv[]
+-      = { "aboot-deploy", "-r", ".", "-c", abootcfg, "-o", options, aboot, NULL };
++      = { "aboot-deploy", "-r", ".", "-c", abootcfg, "-o", options, effective_boot_path, NULL };
+   int estatus;
+ 
+   if (!g_spawn_sync (NULL, (char **)aboot_argv, NULL, G_SPAWN_SEARCH_PATH, child_setup_fchdir,

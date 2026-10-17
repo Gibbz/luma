@@ -36,6 +36,19 @@
       "type": "object", "additionalProperties": false, "required": ["config"],
       "properties": {"config": {"const": "boot.toml"}}
     },
+    "initramfs": {
+      "type": "object", "additionalProperties": false,
+      "required": ["ramdisk_sha256", "base"],
+      "properties": {
+        "ramdisk_sha256": {"$ref": "#/$defs/sha256"},
+        "base": {"type": "string", "minLength": 3, "maxLength": 80},
+        "init_functions": {"$ref": "#/$defs/relpath"},
+        "init_functions_sha256": {"$ref": "#/$defs/sha256"},
+        "ostree_package": {"type": "string", "pattern": "^ostree-[0-9.]+-[A-Za-z0-9._]+$"},
+        "ostree_source": {"$ref": "#/$defs/relpath"}
+      },
+      "dependentRequired": {"init_functions": ["init_functions_sha256"]}
+    },
     "firmware": {
       "type": "object", "additionalProperties": false,
       "required": ["manifest", "manifest_sha256", "files", "store"],

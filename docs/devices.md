@@ -112,13 +112,37 @@ It then runs every device's own tests.
 
 ## Fairphone 6 corresponding source
 
-The Fairphone 6 boot image is built from:
+The Fairphone 6 boot image (`luma-mobile-alpha1-fp6-boot.bin`, SHA-256
+`6b93fa90…`) is built from:
 
-- Kernel: [SimplyLuma/linux `luma-fp6-alpha1-7.1.2-luma-fp-ims1.gmu2.selinux1`](https://github.com/SimplyLuma/linux/tree/luma-fp6-alpha1-7.1.2-luma-fp-ims1.gmu2.selinux1)
+- Kernel, DTB and modules: [SimplyLuma/linux `luma-fp6-alpha1-7.1.2-luma-fp-ims1.gmu2.selinux1`](https://github.com/SimplyLuma/linux/tree/luma-fp6-alpha1-7.1.2-luma-fp-ims1.gmu2.selinux1)
   (GPL-2.0-only), based on milos-mainline/linux `dfe0125e`.
-- Initramfs: postmarketOS edge, unmodified.
-  [`postmarketos-initramfs` 3.12.0-r0](https://gitlab.postmarketos.org/postmarketOS/pmaports/-/tree/41732e213ba0/main/postmarketos-initramfs)
-  (GPL-2.0-or-later), with modules from
-  [`linux-postmarketos-qcom-milos` 7.1.2](https://gitlab.postmarketos.org/postmarketOS/pmaports/-/tree/5689eb3c5174/device/testing/linux-postmarketos-qcom-milos)
-  (GPL-2.0-only), and userspace from the matching Alpine and postmarketOS
-  edge packages.
+- Initramfs: three concatenated cpio archives. The kernel unpacks them in
+  order, and a later file replaces an earlier one.
+  1. and 2. postmarketOS edge, unmodified:
+     [`postmarketos-initramfs` 3.12.0-r0](https://gitlab.postmarketos.org/postmarketOS/pmaports/-/tree/41732e213ba0/main/postmarketos-initramfs)
+     (GPL-2.0-or-later), modules from
+     [`linux-postmarketos-qcom-milos` 7.1.2](https://gitlab.postmarketos.org/postmarketOS/pmaports/-/tree/5689eb3c5174/device/testing/linux-postmarketos-qcom-milos)
+     (GPL-2.0-only), and userspace from the matching Alpine and postmarketOS
+     edge packages.
+  3. The Luma overlay:
+     - `/init_functions.sh` is
+       [`scripts/mobile/fp6-native-init-functions.sh`](../scripts/mobile/fp6-native-init-functions.sh),
+       byte for byte. It is postmarketOS's 3.12.0 `init_functions.sh` plus 119
+       added lines (the firmware store check and the OSTree root setup), and
+       stays GPL-2.0-or-later.
+     - `/usr/lib/ostree/ostree-prepare-root` is from `ostree-2026.5-1.luma.2.fc44`,
+       built by [`scripts/packages/build-ostree-fp6.sh`](../scripts/packages/build-ostree-fp6.sh)
+       from the upstream revisions pinned in
+       [`config/mobile/fp6-ostree-source.json`](../config/mobile/fp6-ostree-source.json)
+       plus [`patches/ostree/`](../patches/ostree)
+       (LGPL-2.0-or-later), with
+       [`packaging/rpm/ostree-fp6.spec`](../packaging/rpm/ostree-fp6.spec).
+     - The libraries it needs are unmodified Fedora 44 packages: glibc 2.43-9,
+       gcc 16.2.1-2 (`libgcc_s`), glib2 2.88.4-1, util-linux 2.41.5-1,
+       composefs 1.0.8-5, openssl 3.5.9-1, libffi 3.5.2-2, pcre2 10.47-1.fc44.1,
+       libselinux 3.11-2, systemd 259.9-1 and zlib-ng 2.3.3-3. Their sources are
+       the matching packages at [src.fedoraproject.org](https://src.fedoraproject.org/).
+     - Kernel modules for `7.1.2-luma-fp-ims1.gmu2.selinux1` are from the
+       kernel tag above. The boot theme (`luma-loading-handheld`, Figtree) is
+       Luma's own artwork.

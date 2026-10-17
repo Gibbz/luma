@@ -612,6 +612,26 @@
       "note": "Extensions library and main application have different terms."
     },
     {
+      "family": "ostree",
+      "path": "patches/ostree/",
+      "status": "documented",
+      "observed_patch_headers": {
+        "patches/ostree/luma-test-aboot-overlay-native.py": [
+          "Apache-2.0"
+        ]
+      },
+      "documented_component_licenses": [
+        "LGPL-2.0-or-later",
+        "LGPL-2.1-or-later",
+        "BSD-2-Clause"
+      ],
+      "evidence": {
+        "document": "docs/devices.md",
+        "line": 134
+      },
+      "note": "The .patch files modify ostree sources and inherit their LGPL terms. luma-aboot-overlay-native-control.c is a build-time test program with no header of its own."
+    },
+    {
       "family": "phoc",
       "path": "patches/phoc/",
       "status": "documented",

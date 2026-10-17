@@ -2752,7 +2752,7 @@
         "GPL-2.0-only"
       ],
       "origin_document": "docs/devices.md",
-      "origin_line": 117
+      "origin_line": 118
     },
     {
       "component": "PMOS-INITRAMFS-FP6-ALPHA1",
@@ -2772,7 +2772,7 @@
         "GPL-2.0-or-later"
       ],
       "origin_document": "docs/devices.md",
-      "origin_line": 119
+      "origin_line": 120
     },
     {
       "component": "PMOS-LINUX-QCOM-MILOS-FP6-INITRAMFS-MODULES",
@@ -2797,7 +2797,85 @@
         "GPL-2.0-only"
       ],
       "origin_document": "docs/devices.md",
-      "origin_line": 119
+      "origin_line": 120
+    },
+    {
+      "component": "LUMA-FP6-INIT-FUNCTIONS-ALPHA1",
+      "upstream": [
+        {
+          "name": "postmarketOS/pmaports postmarketos-initramfs init_functions.sh",
+          "url": "https://gitlab.postmarketos.org/postmarketOS/pmaports/-/blob/41732e213ba0/main/postmarketos-initramfs/init_functions.sh"
+        }
+      ],
+      "recorded_revisions": [
+        "41732e213ba0"
+      ],
+      "recorded_versions": [
+        "3.12.0-r0"
+      ],
+      "license_identifiers": [
+        "GPL-2.0-or-later"
+      ],
+      "origin_document": "docs/devices.md",
+      "origin_line": 129
+    },
+    {
+      "component": "LUMA-OSTREE-FP6-ALPHA1",
+      "upstream": [
+        {
+          "name": "ostreedev/ostree",
+          "url": "https://github.com/ostreedev/ostree"
+        },
+        {
+          "name": "GNOME/libglnx",
+          "url": "https://gitlab.gnome.org/GNOME/libglnx"
+        },
+        {
+          "name": "mendsley/bsdiff",
+          "url": "https://github.com/mendsley/bsdiff"
+        }
+      ],
+      "recorded_revisions": [
+        "a03c4c53a9c02a792775fcff0165fa29e3adc785",
+        "b415d046880d585e5161bf230590543adeea4fe6",
+        "b817e9491cf7b8699c8462ef9e2657ca4ccd7667"
+      ],
+      "recorded_versions": [
+        "2026.5-1.luma.2"
+      ],
+      "license_identifiers": [
+        "LGPL-2.0-or-later",
+        "LGPL-2.1-or-later",
+        "BSD-2-Clause"
+      ],
+      "origin_document": "docs/devices.md",
+      "origin_line": 134
+    },
+    {
+      "component": "FEDORA-44-FP6-INITRAMFS-LIBRARIES",
+      "upstream": [
+        {
+          "name": "Fedora package sources",
+          "url": "https://src.fedoraproject.org/"
+        }
+      ],
+      "recorded_revisions": [],
+      "recorded_versions": [
+        "glibc-2.43-9.fc44",
+        "gcc-16.2.1-2.fc44",
+        "glib2-2.88.4-1.fc44",
+        "util-linux-2.41.5-1.fc44",
+        "composefs-1.0.8-5.fc44",
+        "openssl-3.5.9-1.fc44",
+        "libffi-3.5.2-2.fc44",
+        "pcre2-10.47-1.fc44.1",
+        "libselinux-3.11-2.fc44",
+        "systemd-259.9-1.fc44",
+        "zlib-ng-2.3.3-3.fc44"
+      ],
+      "license_identifiers": [],
+      "origin_document": "docs/devices.md",
+      "origin_line": 141
     }
   ],
   "spdx_license_ids_observed": [

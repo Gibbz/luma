@@ -4,7 +4,7 @@
 
 A device directory holds exactly: device.toml, boot.toml, firmware.manifest,
 INSTALL.md and tests/. Manifests are checked against their JSON Schemas, the
-firmware manifest against the hash device.toml records, and the whole tree
+firmware manifest and initramfs sources against the hashes device.toml records, and the whole tree
 against the rules that keep it public: text only, no firmware blobs, no IMEI
 or ICCID values, and an owner in .github/CODEOWNERS for every directory.
 Each device's own tests then run.
@@ -217,6 +217,29 @@ class Checker:
         if files != firmware.get("files"):
             self.error(path, f"{files} files listed but device.toml says {firmware.get('files')}")
 
+    def check_initramfs(self, device_dir: Path, initramfs: dict | None) -> None:
+        """Repository files the boot image's initramfs is built from must exist as recorded."""
+        if not initramfs:
+            return
+        where = device_dir / "device.toml"
+        script = initramfs.get("init_functions")
+        if script:
+            path = self.root / script
+            if not path.is_file():
+                self.error(where, f"initramfs.init_functions {script!r} does not exist")
+            elif hashlib.sha256(path.read_bytes()).hexdigest() != initramfs.get("init_functions_sha256"):
+                self.error(where, f"{script} differs from initramfs.init_functions_sha256")
+        source = initramfs.get("ostree_source")
+        if source:
+            path = self.root / source
+            if not path.is_file():
+                self.error(where, f"initramfs.ostree_source {source!r} does not exist")
+            else:
+                pins = json.loads(path.read_text())
+                package = f"ostree-{pins.get('version')}-{pins.get('release')}"
+                if not initramfs.get("ostree_package", "").startswith(package + "."):
+                    self.error(where, f"initramfs.ostree_package does not match {source} ({package})")
+
     def check_boot(self, device_dir: Path, boot: dict, soc: dict | None, tier: str) -> None:
         path = device_dir / "boot.toml"
         cmdline = boot.get("cmdline", {})
@@ -299,6 +322,7 @@ class Checker:
                 release = device.get("kernel", {}).get("release", "")
                 if tag and release and not tag.endswith("-" + release):
                     self.error(device_dir / "device.toml", "kernel.tag must end with the kernel release")
+                self.check_initramfs(device_dir, device.get("initramfs"))
                 if (device_dir / "firmware.manifest").is_file():
                     self.check_firmware_manifest(device_dir, device.get("firmware", {}))
                 self.check_boot(device_dir, boot, soc, device.get("tier", ""))
