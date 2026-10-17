@@ -22,6 +22,9 @@ class DeviceTree(unittest.TestCase):
                             ignore=shutil.ignore_patterns("__pycache__"))
         (self.root / ".github").mkdir()
         shutil.copy(ROOT / ".github" / "CODEOWNERS", self.root / ".github" / "CODEOWNERS")
+        for name in ("scripts/mobile/fp6-native-init-functions.sh", "config/mobile/fp6-ostree-source.json"):
+            (self.root / name).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy(ROOT / name, self.root / name)
         self.fp6 = self.root / "devices" / "fairphone" / "fp6"
 
     def tearDown(self):
@@ -86,6 +89,15 @@ class DeviceTree(unittest.TestCase):
         manifest = self.fp6 / "firmware.manifest"
         manifest.write_text(manifest.read_text() + "L\t777\t-\tescape\t../../etc/passwd\n")
         self.assertRejected("malformed 'L' row")
+
+    def test_initramfs_script_must_match_the_recorded_hash(self):
+        script = self.root / "scripts/mobile/fp6-native-init-functions.sh"
+        script.write_text(script.read_text() + "# changed\n")
+        self.assertRejected("differs from initramfs.init_functions_sha256")
+
+    def test_initramfs_ostree_package_must_match_its_source_pins(self):
+        self.edit(self.fp6 / "device.toml", "1.luma.2.fc44", "1.luma.9.fc44")
+        self.assertRejected("initramfs.ostree_package does not match")
 
     def test_selinux_must_stay_enforcing(self):
         self.edit(self.fp6 / "boot.toml", '  "enforcing=1",\n', '')

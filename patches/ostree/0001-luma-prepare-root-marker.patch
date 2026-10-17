@@ -1,0 +1,37 @@
+--- a/src/switchroot/ostree-prepare-root.c
++++ b/src/switchroot/ostree-prepare-root.c
+@@ -226,6 +226,25 @@
+     g_printerr ("failed to create /run/systemd/volatile-root: %s\n", strerror (errno));
+ }
+ 
++/* The supported initramfs-mount-var marker requires /run/ostree to exist.
++ * Reuse only the expected root-owned real directory, never a foreign node. */
++static int
++ensure_run_ostree_directory (const char *path)
++{
++  if (mkdir (path, 0755) < 0 && errno != EEXIST)
++    return -1;
++  struct stat st;
++  if (lstat (path, &st) < 0)
++    return -1;
++  if (!S_ISDIR (st.st_mode) || st.st_uid != 0 || st.st_gid != 0
++      || (st.st_mode & 07777) != 0755)
++    {
++      errno = EINVAL;
++      return -1;
++    }
++  return 0;
++}
++
+ int
+ main (int argc, char *argv[])
+ {
+@@ -299,7 +318,7 @@
+   g_assert (deploy_directory_name && *deploy_directory_name);
+ 
+   /* These are global state directories underneath /run */
+-  if (mkdirat (AT_FDCWD, OTCORE_RUN_OSTREE, 0755) < 0)
++  if (ensure_run_ostree_directory (OTCORE_RUN_OSTREE) < 0)
+     err (EXIT_FAILURE, "Failed to create %s", OTCORE_RUN_OSTREE);
+   if (mkdirat (AT_FDCWD, OTCORE_RUN_OSTREE_PRIVATE, 0) < 0)
+     err (EXIT_FAILURE, "Failed to create %s", OTCORE_RUN_OSTREE_PRIVATE);

@@ -1,0 +1,11 @@
+--- a/src/libostree/ostree-sign-ed25519.c
++++ b/src/libostree/ostree-sign-ed25519.c
+@@ -156,7 +156,7 @@
+       return glnx_throw (error, "openssl: Failed to initialize ed25519 key");
+     }
+ 
+-  size_t len;
++  size_t len = OSTREE_SIGN_ED25519_SIG_SIZE;
+   if (EVP_DigestSignInit (ctx, NULL, NULL, NULL, pkey)
+       && EVP_DigestSign (ctx, sig, &len, g_bytes_get_data (data, NULL), g_bytes_get_size (data)))
+     sig_size = len;

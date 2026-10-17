@@ -157,6 +157,9 @@ Creative, Office, and Imager records may remain here for historical attribution;
 
 - **LUMA-LINUX-MILOS-FP6-ALPHA1** — [SimplyLuma/linux tag `luma-fp6-alpha1-7.1.2-luma-fp-ims1.gmu2.selinux1`](https://github.com/SimplyLuma/linux/tree/luma-fp6-alpha1-7.1.2-luma-fp-ims1.gmu2.selinux1); [milos-mainline/linux](https://github.com/milos-mainline/linux). Recorded revision: `dfe0125e73541d1984e4d2d37bd069a036bf0451`. License: GPL-2.0-only.
 - **PMOS-INITRAMFS-FP6-ALPHA1** — [pmaports postmarketos-initramfs 3.12.0-r0](https://gitlab.postmarketos.org/postmarketOS/pmaports/-/tree/41732e213ba0/main/postmarketos-initramfs). Recorded revision: `41732e213ba0`. License: GPL-2.0-or-later.
+- **LUMA-FP6-INIT-FUNCTIONS-ALPHA1** — `scripts/mobile/fp6-native-init-functions.sh`, modified from [postmarketos-initramfs init_functions.sh](https://gitlab.postmarketos.org/postmarketOS/pmaports/-/blob/41732e213ba0/main/postmarketos-initramfs/init_functions.sh). Recorded revision: `41732e213ba0`. License: GPL-2.0-or-later.
+- **LUMA-OSTREE-FP6-ALPHA1** — [ostreedev/ostree](https://github.com/ostreedev/ostree) with `patches/ostree/`; [libglnx](https://gitlab.gnome.org/GNOME/libglnx); [bsdiff](https://github.com/mendsley/bsdiff). Recorded revision: `a03c4c53a9c02a792775fcff0165fa29e3adc785`, `b415d046880d585e5161bf230590543adeea4fe6`, `b817e9491cf7b8699c8462ef9e2657ca4ccd7667`. License: LGPL-2.0-or-later.
+- **FEDORA-44-FP6-INITRAMFS-LIBRARIES** — [Fedora package sources](https://src.fedoraproject.org/) for glibc 2.43-9, gcc 16.2.1-2, glib2 2.88.4-1, util-linux 2.41.5-1, composefs 1.0.8-5, openssl 3.5.9-1, libffi 3.5.2-2, pcre2 10.47-1.fc44.1, libselinux 3.11-2, systemd 259.9-1, zlib-ng 2.3.3-3. Recorded revision: See linked source and build recipe. License: Component-specific; inspect exact upstream source license.
 - **PMOS-LINUX-QCOM-MILOS-FP6-INITRAMFS-MODULES** — [pmaports linux-postmarketos-qcom-milos 7.1.2-r1](https://gitlab.postmarketos.org/postmarketOS/pmaports/-/tree/5689eb3c5174/device/testing/linux-postmarketos-qcom-milos); [milos-mainline/linux v7.1.2-milos](https://github.com/milos-mainline/linux/tree/v7.1.2-milos). Recorded revision: `5689eb3c5174`. License: GPL-2.0-only.
 
 ## SPDX texts needed
@@ -175,4 +178,4 @@ Identifiers: `AFL-2.0`, `AGPL-3.0-only`, `AGPL-3.0-or-later`, `Apache-2.0`, `Aut
 
 ## Downstream patch inheritance
 
-`PATCH-LICENSE-INHERITANCE.json` records each of the 60 patch families. 25 have component-license evidence in the source register or package recipes; the remaining 35 are explicitly unresolved by this audit. Preserve upstream copyright notices and original patch author headers. Aggregate package expressions and mixed artwork/code terms must not be used to assign a single license to every patch.
+`PATCH-LICENSE-INHERITANCE.json` records each of the 61 patch families. 26 have component-license evidence in the source register or package recipes; the remaining 35 are explicitly unresolved by this audit. Preserve upstream copyright notices and original patch author headers. Aggregate package expressions and mixed artwork/code terms must not be used to assign a single license to every patch.
