@@ -1,0 +1,34 @@
+# SPDX-License-Identifier: Apache-2.0
+# Shared configuration for every device on the Qualcomm SM7635 (milos) family.
+# A device on this SoC sets `soc = "qcom/milos"` and only declares what differs.
+schema = 1
+vendor = "qcom"
+family = "milos"
+name = "Qualcomm SM7635 (milos)"
+arch = "aarch64"
+part_numbers = ["SM7635"]
+
+[kernel]
+repository = "https://github.com/SimplyLuma/linux"
+branch = "milos"
+upstream = "https://github.com/milos-mainline/linux"
+dts_directory = "arch/arm64/boot/dts/qcom"
+
+[boot]
+# Android bootloader (ABL) defaults for this family. Devices may override.
+format = "android-boot-v2"
+page_size = 4096
+slots = "ab"
+dtb_in_boot_image = true
+
+[boot.offsets]
+base = 0x00000000
+kernel = 0x00008000
+ramdisk = 0x01000000
+second = 0x00000000
+tags = 0x00000100
+dtb = 0x01f00000
+
+[firmware]
+# Device firmware lives under this path on the phone, never in git.
+directory = "qcom/milos"

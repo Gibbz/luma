@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: Apache-2.0
+# Every device and SoC directory needs an owner here; tools/check-devices.py
+# fails when one is missing or does not list the device's maintainers.
+
+# Device tree rules, schemas and checker
+/devices/*.schema.json  @nmcmil
+/socs/*.schema.json     @nmcmil
+/tools/check-devices.py @nmcmil
+/docs/devices.md        @nmcmil
+
+# SoC families
+/socs/qcom/milos/       @nmcmil
+
+# Devices
+/devices/fairphone/fp6/ @nmcmil

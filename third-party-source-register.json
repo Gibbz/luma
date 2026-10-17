@@ -2728,6 +2728,76 @@
       ],
       "origin_document": "docs/research/component-ledger.md",
       "origin_line": 72
+    },
+    {
+      "component": "LUMA-LINUX-MILOS-FP6-ALPHA1",
+      "upstream": [
+        {
+          "name": "SimplyLuma/linux",
+          "url": "https://github.com/SimplyLuma/linux/tree/luma-fp6-alpha1-7.1.2-luma-fp-ims1.gmu2.selinux1"
+        },
+        {
+          "name": "milos-mainline/linux",
+          "url": "https://github.com/milos-mainline/linux"
+        }
+      ],
+      "recorded_revisions": [
+        "dfe0125e73541d1984e4d2d37bd069a036bf0451",
+        "luma-fp6-alpha1-7.1.2-luma-fp-ims1.gmu2.selinux1"
+      ],
+      "recorded_versions": [
+        "7.1.2-luma-fp-ims1.gmu2.selinux1"
+      ],
+      "license_identifiers": [
+        "GPL-2.0-only"
+      ],
+      "origin_document": "docs/devices.md",
+      "origin_line": 117
+    },
+    {
+      "component": "PMOS-INITRAMFS-FP6-ALPHA1",
+      "upstream": [
+        {
+          "name": "postmarketOS/pmaports postmarketos-initramfs",
+          "url": "https://gitlab.postmarketos.org/postmarketOS/pmaports/-/tree/41732e213ba0/main/postmarketos-initramfs"
+        }
+      ],
+      "recorded_revisions": [
+        "41732e213ba0"
+      ],
+      "recorded_versions": [
+        "3.12.0-r0"
+      ],
+      "license_identifiers": [
+        "GPL-2.0-or-later"
+      ],
+      "origin_document": "docs/devices.md",
+      "origin_line": 119
+    },
+    {
+      "component": "PMOS-LINUX-QCOM-MILOS-FP6-INITRAMFS-MODULES",
+      "upstream": [
+        {
+          "name": "postmarketOS/pmaports linux-postmarketos-qcom-milos",
+          "url": "https://gitlab.postmarketos.org/postmarketOS/pmaports/-/tree/5689eb3c5174/device/testing/linux-postmarketos-qcom-milos"
+        },
+        {
+          "name": "milos-mainline/linux v7.1.2-milos",
+          "url": "https://github.com/milos-mainline/linux/tree/v7.1.2-milos"
+        }
+      ],
+      "recorded_revisions": [
+        "5689eb3c5174",
+        "v7.1.2-milos"
+      ],
+      "recorded_versions": [
+        "7.1.2-r1"
+      ],
+      "license_identifiers": [
+        "GPL-2.0-only"
+      ],
+      "origin_document": "docs/devices.md",
+      "origin_line": 119
     }
   ],
   "spdx_license_ids_observed": [

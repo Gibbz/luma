@@ -3,6 +3,7 @@
 Luma uses a shared OS platform and application codebase across desktop, tablet and mobile. Architecture and hardware differences belong in configuration, packaging and narrowly scoped upstream patches rather than duplicated app repositories.
 
 - `config/desktop/`: desktop package inputs and composition.
+- `devices/` and `socs/`: one strict manifest per supported device and shared SoC-family configuration; see [devices.md](devices.md).
 - `config/mobile/` and `scripts/mobile/`: mobile userspace, boot and device work.
 - `patches/linux-*`, `patches/gnome-mobile/`, `patches/phosh/` and `patches/phoc/`: kernel and mobile integration where required.
 - `packaging/`: component recipes and architecture constraints.

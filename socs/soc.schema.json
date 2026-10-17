@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/SimplyLuma/luma/socs/soc.schema.json",
+  "title": "Luma SoC family configuration (socs/<vendor>/<family>/soc.toml)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "vendor", "family", "name", "arch", "kernel", "boot"],
+  "properties": {
+    "schema": {"const": 1},
+    "vendor": {"type": "string", "pattern": "^[a-z0-9]+$"},
+    "family": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$"},
+    "name": {"type": "string", "minLength": 2, "maxLength": 80},
+    "arch": {"enum": ["aarch64", "x86_64", "riscv64"]},
+    "part_numbers": {"type": "array", "uniqueItems": true, "items": {"type": "string", "pattern": "^[A-Z0-9-]+$"}},
+    "kernel": {
+      "type": "object", "additionalProperties": false, "required": ["repository", "branch"],
+      "properties": {
+        "repository": {"const": "https://github.com/SimplyLuma/linux"},
+        "branch": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$"},
+        "upstream": {"type": "string", "pattern": "^https://"},
+        "dts_directory": {"type": "string", "pattern": "^arch/[a-z0-9]+/boot/dts(/[a-z0-9_-]+)?$"}
+      }
+    },
+    "boot": {
+      "type": "object", "additionalProperties": false, "required": ["format"],
+      "properties": {
+        "format": {"enum": ["android-boot-v2", "android-boot-v3", "android-boot-v4", "uefi"]},
+        "page_size": {"enum": [2048, 4096, 16384]},
+        "slots": {"enum": ["ab", "a-only"]},
+        "dtb_in_boot_image": {"type": "boolean"},
+        "offsets": {
+          "type": "object", "additionalProperties": false,
+          "required": ["base", "kernel", "ramdisk", "second", "tags", "dtb"],
+          "properties": {
+            "base": {"type": "integer", "minimum": 0}, "kernel": {"type": "integer", "minimum": 0},
+            "ramdisk": {"type": "integer", "minimum": 0}, "second": {"type": "integer", "minimum": 0},
+            "tags": {"type": "integer", "minimum": 0}, "dtb": {"type": "integer", "minimum": 0}
+          }
+        }
+      }
+    },
+    "firmware": {
+      "type": "object", "additionalProperties": false, "required": ["directory"],
+      "properties": {"directory": {"type": "string", "pattern": "^[a-z0-9_-]+(/[a-z0-9_-]+)*$"}}
+    }
+  }
+}

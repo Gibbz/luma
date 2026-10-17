@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/SimplyLuma/luma/devices/device.schema.json",
+  "title": "Luma device manifest (devices/<vendor>/<codename>/device.toml)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "vendor", "codename", "name", "form_factor", "soc", "tier", "maintainers", "kernel", "boot", "firmware", "install"],
+  "properties": {
+    "schema": {"const": 1},
+    "vendor": {"$ref": "#/$defs/slug"},
+    "codename": {"$ref": "#/$defs/slug"},
+    "name": {"type": "string", "minLength": 2, "maxLength": 80},
+    "marketing_name": {"type": "string", "minLength": 2, "maxLength": 80},
+    "form_factor": {"enum": ["phone", "tablet", "laptop", "desktop", "handheld", "other"]},
+    "year": {"type": "integer", "minimum": 2000, "maximum": 2100},
+    "soc": {"type": "string", "pattern": "^[a-z0-9]+/[a-z0-9][a-z0-9-]*$"},
+    "tier": {"enum": ["supported", "community", "experimental"]},
+    "maintainers": {
+      "type": "array", "minItems": 1, "uniqueItems": true,
+      "items": {"type": "string", "pattern": "^@[A-Za-z0-9][A-Za-z0-9-]*(/[A-Za-z0-9._-]+)?$"}
+    },
+    "fastboot_product": {"type": "string", "pattern": "^[A-Za-z0-9_-]+$"},
+    "kernel": {
+      "type": "object", "additionalProperties": false,
+      "required": ["tag", "release", "config", "dtb"],
+      "properties": {
+        "branch": {"$ref": "#/$defs/slug", "description": "Overrides the SoC's kernel branch."},
+        "tag": {"type": "string", "pattern": "^luma-[a-z0-9-]+-[A-Za-z0-9._+-]+$"},
+        "release": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+(\\.[0-9]+)?[A-Za-z0-9._+-]*$"},
+        "config": {"$ref": "#/$defs/relpath"},
+        "dtb": {"type": "string", "pattern": "^[a-z0-9_-]+/[A-Za-z0-9_.,+-]+\\.dtb$"},
+        "dtb_overlays": {"$ref": "#/$defs/relpath"}
+      }
+    },
+    "boot": {
+      "type": "object", "additionalProperties": false, "required": ["config"],
+      "properties": {"config": {"const": "boot.toml"}}
+    },
+    "firmware": {
+      "type": "object", "additionalProperties": false,
+      "required": ["manifest", "manifest_sha256", "files", "store"],
+      "properties": {
+        "manifest": {"const": "firmware.manifest"},
+        "manifest_sha256": {"$ref": "#/$defs/sha256"},
+        "files": {"type": "integer", "minimum": 0},
+        "store": {"type": "string", "pattern": "^/var/[A-Za-z0-9_./-]+$"}
+      }
+    },
+    "install": {
+      "type": "object", "additionalProperties": false, "required": ["guide", "method", "preserve"],
+      "properties": {
+        "guide": {"const": "INSTALL.md"},
+        "method": {"enum": ["fastboot", "installer", "uefi", "other"]},
+        "preserve": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/slug"}}
+      }
+    },
+    "updates": {
+      "type": "object", "additionalProperties": false, "required": ["ostree_ref"],
+      "properties": {"ostree_ref": {"type": "string", "pattern": "^luma/[0-9]+/[a-z0-9_]+/[a-z0-9-]+/[a-z0-9-]+$"}}
+    },
+    "releases": {
+      "type": "array",
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["name", "date", "boot_image", "boot_image_sha256"],
+        "properties": {
+          "name": {"$ref": "#/$defs/slug"},
+          "date": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"},
+          "boot_image": {"$ref": "#/$defs/url"},
+          "boot_image_sha256": {"$ref": "#/$defs/sha256"},
+          "system_image": {"$ref": "#/$defs/url"},
+          "system_image_sha256": {"$ref": "#/$defs/sha256"}
+        },
+        "dependentRequired": {"system_image": ["system_image_sha256"]}
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"tier": {"const": "supported"}}},
+      "then": {"required": ["releases", "updates"], "properties": {"releases": {"minItems": 1}}}
+    }
+  ],
+  "$defs": {
+    "slug": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_-]*$", "maxLength": 40},
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "url": {"type": "string", "pattern": "^https://[A-Za-z0-9.-]+/[A-Za-z0-9._~/%-]*$"},
+    "relpath": {"type": "string", "pattern": "^[A-Za-z0-9_][A-Za-z0-9_./+-]*$", "not": {"pattern": "(^|/)\\.\\.(/|$)"}}
+  }
+}
