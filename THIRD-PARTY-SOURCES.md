@@ -155,6 +155,10 @@ Creative, Office, and Imager records may remain here for historical attribution;
 - **upstream download** — [upstream download](https://f-droid.org/packages/org.fdroid.fdroid/). Recorded revision: `985f5181d48bb6bafd54083a048b391271e0ab28385881cc41294fb01a222762`. License: AGPL-3.0-or-later.
 - **AOSP LatinIME native decoder** — [upstream](https://android.googlesource.com/platform/packages/inputmethods/LatinIME/). Recorded revision: `127336e9f29d69607eab55982324b210279ae8c5`, `581e0a428fff00d4ac574866596d6de9408bb76d1ce9626e34c887113713253f`. License: Apache-2.0.
 
+- **LUMA-LINUX-MILOS-FP6-ALPHA1** — [SimplyLuma/linux tag `luma-fp6-alpha1-7.1.2-luma-fp-ims1.gmu2.selinux1`](https://github.com/SimplyLuma/linux/tree/luma-fp6-alpha1-7.1.2-luma-fp-ims1.gmu2.selinux1); [milos-mainline/linux](https://github.com/milos-mainline/linux). Recorded revision: `dfe0125e73541d1984e4d2d37bd069a036bf0451`. License: GPL-2.0-only.
+- **PMOS-INITRAMFS-FP6-ALPHA1** — [pmaports postmarketos-initramfs 3.12.0-r0](https://gitlab.postmarketos.org/postmarketOS/pmaports/-/tree/41732e213ba0/main/postmarketos-initramfs). Recorded revision: `41732e213ba0`. License: GPL-2.0-or-later.
+- **PMOS-LINUX-QCOM-MILOS-FP6-INITRAMFS-MODULES** — [pmaports linux-postmarketos-qcom-milos 7.1.2-r1](https://gitlab.postmarketos.org/postmarketOS/pmaports/-/tree/5689eb3c5174/device/testing/linux-postmarketos-qcom-milos); [milos-mainline/linux v7.1.2-milos](https://github.com/milos-mainline/linux/tree/v7.1.2-milos). Recorded revision: `5689eb3c5174`. License: GPL-2.0-only.
+
 ## SPDX texts needed
 
 Observed identifiers: `AGPL-3.0-or-later`, `Apache-2.0`, `BSD-2-Clause`, `BSD-3-Clause`, `BSD-3-Clause-Clear`, `CC-BY-4.0`, `CC-BY-SA-4.0`, `CC0-1.0`, `GPL-2.0`, `GPL-2.0-only`, `GPL-2.0-or-later`, `GPL-3.0-only`, `GPL-3.0-or-later`, `ISC`, `LGPL-2.1-or-later`, `LGPL-3.0-only`, `MIT`, `MPL-2.0`.

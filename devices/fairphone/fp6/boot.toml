@@ -1,0 +1,44 @@
+# SPDX-License-Identifier: Apache-2.0
+# Boot policy for the Fairphone 6. Format, page size and offsets come from
+# socs/qcom/milos/soc.toml. On the phone, libostree's aboot backend rebuilds the
+# boot image from the deployed kernel, DTB and initramfs on every update.
+schema = 1
+partition = "boot"
+partition_size = 100663296
+os_version = "99.87.36"
+os_patch_level = "2099-12-31"
+
+[cmdline]
+# Fixed arguments, in order.
+args = [
+  "quiet",
+  "splash",
+  "plymouth.ignore-serial-consoles",
+  "plymouth.prefer-fbcon",
+  "console=tty0",
+  "pmos_rootfsopts=defaults",
+  "rootwait",
+  "ro",
+  "init=/init",
+  "enforcing=1",
+]
+# Filled in per image and per deployment by the image builder and libostree.
+generated = ["pmos_root_uuid", "pmos_boot_uuid", "ostree"]
+# Release images must keep SELinux enforcing; these may never appear.
+forbidden = ["selinux=0", "enforcing=0", "lsm="]
+
+[avb]
+# An unsigned AVB hash footer (algorithm NONE): an integrity envelope for an
+# unlocked bootloader, not verified boot. vbmeta stays as Fairphone ships it.
+footer = "hash"
+algorithm = "NONE"
+hash_algorithm = "sha256"
+rollback_index = 1783209600
+vbmeta = "untouched"
+
+[dtbo]
+# Luma ships its own complete DTB in the boot image. Stock overlays written
+# for Android must not apply to it, so both dtbo slots are flashed blank.
+policy = "blank"
+size = 31457280
+partitions = ["dtbo_a", "dtbo_b"]
