@@ -21,6 +21,19 @@ dtb_overlays = "luma/fp6/alpha1/dtb"
 [boot]
 config = "boot.toml"
 
+[initramfs]
+# The boot image's ramdisk is three concatenated cpio archives; the kernel
+# unpacks them in order and later files replace earlier ones.
+#  1-2: postmarketOS edge initramfs (postmarketos-initramfs 3.12.0-r0), unmodified.
+#  3:   Luma overlay: init_functions.sh, Luma kernel modules, ostree-prepare-root
+#       with its Fedora 44 libraries, and the boot theme.
+ramdisk_sha256 = "944489269addf33f8cd5e8f305ccc368573396e26df03dc6ea63970242659a82"
+base = "postmarketos-initramfs 3.12.0-r0"
+init_functions = "scripts/mobile/fp6-native-init-functions.sh"
+init_functions_sha256 = "64bbcd91dbdc0c6956cf79e40ad580ed089494b646acf824138ba57b6f997f4c"
+ostree_package = "ostree-2026.5-1.luma.2.fc44"
+ostree_source = "config/mobile/fp6-ostree-source.json"
+
 [firmware]
 manifest = "firmware.manifest"
 manifest_sha256 = "79a3c9b336f43dc341953426f1e8fc1ebf6c07d24a997dfe5c04370f31c80d7b"

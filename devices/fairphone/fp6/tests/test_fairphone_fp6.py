@@ -64,6 +64,17 @@ class FairphoneFp6(unittest.TestCase):
         self.assertEqual(self.soc["kernel"]["branch"], "milos")
         self.assertNotIn("branch", self.device["kernel"])
 
+    def test_initramfs_overlay_sources_are_in_this_tree(self):
+        # The third cpio archive in the boot image's ramdisk replaces
+        # postmarketOS's /init_functions.sh with this file, byte for byte.
+        initramfs = self.device["initramfs"]
+        script = (ROOT / initramfs["init_functions"]).read_bytes()
+        self.assertEqual(hashlib.sha256(script).hexdigest(), initramfs["init_functions_sha256"])
+        self.assertIn(b"luma_verify_firmware_store", script)
+        self.assertIn(self.device["firmware"]["store"].encode(), script)
+        self.assertTrue((ROOT / "patches" / "ostree").is_dir())
+        self.assertTrue((ROOT / "packaging" / "rpm" / "ostree-fp6.spec").is_file())
+
     def test_firmware_is_listed_not_shipped(self):
         rows = (DEVICE / "firmware.manifest").read_text().splitlines()
         device_files = [r.split("\t")[3] for r in rows[1:] if r.startswith("F\t")]
