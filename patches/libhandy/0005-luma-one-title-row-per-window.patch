@@ -13,7 +13,7 @@ identity or shows window controls. The roles lift while the leaflet is folded.
 ---
 
 diff --git a/src/hdy-header-bar.c b/src/hdy-header-bar.c
-index 80dea28..1033c4b 100644
+index 80dea28..a2c34b9 100644
 --- a/src/hdy-header-bar.c
 +++ b/src/hdy-header-bar.c
 @@ -23,6 +23,7 @@
@@ -51,7 +51,7 @@ index 80dea28..1033c4b 100644
      return;
  
    direction = gtk_widget_get_direction (widget);
-@@ -653,6 +658,10 @@ update_is_mobile_window (HdyHeaderBar *self)
+@@ -660,9 +665,19 @@ update_is_mobile_window (HdyHeaderBar *self)
    GtkWidget *toplevel = gtk_widget_get_toplevel (GTK_WIDGET (self));
    gboolean was_mobile_window = priv->is_mobile_window;
  
@@ -59,10 +59,6 @@ index 80dea28..1033c4b 100644
 +      g_object_get_data (G_OBJECT (toplevel), "luma-window-mixin-constructing"))
 +    return;
 +
-   if (!gtk_widget_is_toplevel (toplevel))
-     return;
- 
-@@ -663,6 +668,12 @@ update_is_mobile_window (HdyHeaderBar *self)
    if (!gtk_widget_is_toplevel (toplevel))
      return;
  
@@ -75,7 +71,7 @@ index 80dea28..1033c4b 100644
    priv->is_mobile_window = compute_is_mobile_window (GTK_WINDOW (toplevel));
  
    if (priv->is_mobile_window != was_mobile_window)
-@@ -1014,6 +1025,14 @@ hdy_header_bar_measure (GtkWidget      *widget,
+@@ -1014,6 +1029,14 @@ hdy_header_bar_measure (GtkWidget      *widget,
    else
      hdy_header_bar_compute_size_for_opposing_orientation (widget, MAX (for_size, css_width), minimum, natural);
  
@@ -90,7 +86,7 @@ index 80dea28..1033c4b 100644
    luma_command_row_measure (HDY_HEADER_BAR (widget), orientation, for_size, minimum, natural);
  
    hdy_css_measure (widget, orientation, minimum, natural);
-@@ -2063,6 +2082,8 @@ hdy_header_bar_realize (GtkWidget *widget)
+@@ -2063,6 +2086,8 @@ hdy_header_bar_realize (GtkWidget *widget)
                             attributes_mask);
    gtk_widget_set_window (widget, window);
    gtk_widget_register_window (widget, window);
@@ -99,7 +95,7 @@ index 80dea28..1033c4b 100644
  }
  
  static void
-@@ -2264,6 +2285,7 @@ add_automatic_luma_identity (HdyHeaderBar *self)
+@@ -2264,6 +2289,7 @@ add_automatic_luma_identity (HdyHeaderBar *self)
    GtkApplication *application;
  
    if (priv->luma_identity ||
@@ -107,7 +103,7 @@ index 80dea28..1033c4b 100644
        !GTK_IS_WINDOW (toplevel) ||
        gtk_window_get_transient_for (GTK_WINDOW (toplevel)) != NULL ||
        gtk_style_context_has_class (context, "luma-no-automatic-identity") ||
-@@ -2320,6 +2342,103 @@ remove_automatic_luma_identity (HdyHeaderBar *self)
+@@ -2320,6 +2346,103 @@ remove_automatic_luma_identity (HdyHeaderBar *self)
    luma_update_title_repeat (self);
  }
  
@@ -211,7 +207,7 @@ index 80dea28..1033c4b 100644
  /* Luma command row (see gtkheaderbar.c in the Luma GTK 3 downstream).
   *
   * A header bar that owns the automatic Luma application identity presents the
-@@ -2542,7 +2661,7 @@ luma_enter_command_row (HdyHeaderBar *self)
+@@ -2542,7 +2665,7 @@ luma_enter_command_row (HdyHeaderBar *self)
    GList *l, *next;
  
    if (priv->luma_command_bar ||
@@ -220,7 +216,7 @@ index 80dea28..1033c4b 100644
        !GTK_IS_WINDOW (toplevel) ||
        gtk_window_get_transient_for (GTK_WINDOW (toplevel)) != NULL ||
        gtk_style_context_has_class (context, "luma-no-command-row"))
-@@ -2653,6 +2772,19 @@ hdy_header_bar_hierarchy_changed (GtkWidget *widget,
+@@ -2653,6 +2776,19 @@ hdy_header_bar_hierarchy_changed (GtkWidget *widget,
    HdyHeaderBarPrivate *priv = hdy_header_bar_get_instance_private (self);
  
    remove_automatic_luma_identity (self);
@@ -241,7 +237,7 @@ index 80dea28..1033c4b 100644
    toplevel = gtk_widget_get_toplevel (widget);
  
 diff --git a/src/hdy-window-mixin.c b/src/hdy-window-mixin.c
-index 4bade07..66f36aa 100644
+index 4bade07..a28cc5f 100644
 --- a/src/hdy-window-mixin.c
 +++ b/src/hdy-window-mixin.c
 @@ -8,6 +8,7 @@
@@ -252,7 +248,7 @@ index 4bade07..66f36aa 100644
  #include "hdy-nothing-private.h"
  #include "hdy-window-mixin-private.h"
  
-@@ -566,8 +567,19 @@ hdy_window_mixin_new (GtkWindow      *window,
+@@ -566,9 +567,21 @@ hdy_window_mixin_new (GtkWindow      *window,
    GTK_CONTAINER_CLASS (self->klass)->add (GTK_CONTAINER (self->window),
                                            self->content);
  
@@ -274,3 +270,4 @@ index 4bade07..66f36aa 100644
 +  g_object_set_data (G_OBJECT (self->window), "luma-window-mixin-constructing", NULL);
  
    context = gtk_widget_get_style_context (GTK_WIDGET (self->window));
+   gtk_style_context_add_class (context, "unified");
