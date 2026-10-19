@@ -1,0 +1,102 @@
+--- a/js/ui/shelfArrange.js
++++ b/js/ui/shelfArrange.js
+@@ -34,7 +34,6 @@
+ import {getNotificationTray} from './lumaNotificationBeacon.js';
+ 
+ const LIFT_SCALE = 1.04;
+-const HOLD_SCALE = 1.02;
+ const LIFT_TIME = 150;
+ const DROP_TIME = 240;
+ const OUTLINE_OFFSET = 6;
+@@ -433,12 +432,6 @@
+                 this._resetHoldScale(actor);
+                 this.begin({grab: id, x, y, pressed: true});
+             });
+-            gesture.connect('notify::pressed', () => {
+-                if (gesture.pressed)
+-                    this._growForHold(actor);
+-                else
+-                    this._resetHoldScale(actor);
+-            });
+             actor.reactive = true;
+             actor.add_action(gesture);
+             actor._lumaHoldGesture = gesture;
+@@ -457,33 +450,11 @@
+         return [x, y];
+     }
+ 
+-    // The island grows a little under the press from the start, so that a
+-    // long press is something the person watches happen rather than
+-    // something that happens to them.
+-    _growForHold(actor) {
+-        if (!St.Settings.get().enable_animations || !actor)
+-            return;
+-        actor.set_pivot_point(0.5, 0.5);
+-        actor.ease({scale_x: HOLD_SCALE, scale_y: HOLD_SCALE,
+-            duration: Arrangement.HOLD_TIME_TOUCH,
+-            mode: Clutter.AnimationMode.LINEAR});
+-    }
+-
+     _startHold(id, x, y, sequence) {
+         this._cancelHold();
+         const actor = this._shelf.islandActorFor(id);
+         this._hold = {id, x, y, sequence, actor, started: GLib.get_monotonic_time()};
+-        // From 150 ms the island begins a quiet 1.00 → 1.02 scale.
+-        this._hold.feedbackId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, Arrangement.HOLD_FEEDBACK_TIME, () => {
+-            this._hold.feedbackId = 0;
+-            if (St.Settings.get().enable_animations && actor) {
+-                actor.set_pivot_point(0.5, 0.5);
+-                actor.ease({scale_x: HOLD_SCALE, scale_y: HOLD_SCALE,
+-                    duration: Arrangement.HOLD_TIME - Arrangement.HOLD_FEEDBACK_TIME,
+-                    mode: Clutter.AnimationMode.LINEAR});
+-            }
+-            return GLib.SOURCE_REMOVE;
+-        });
++        // The carrier lifts only after the hold is recognized.
+         this._hold.liftId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, Arrangement.HOLD_TIME, () => {
+             this._hold.liftId = 0;
+             const hold = this._hold;
+@@ -518,7 +489,7 @@
+         }
+         if (!this._hold)
+             return;
+-        for (const key of ['feedbackId', 'liftId']) {
++        for (const key of ['liftId']) {
+             if (this._hold[key])
+                 GLib.source_remove(this._hold[key]);
+         }
+@@ -1131,7 +1102,12 @@
+             dragGroup.set_scale(1, 1);
+             dragGroup.ease({scale_x: LIFT_SCALE, scale_y: LIFT_SCALE,
+                 duration: St.Settings.get().enable_animations ? LIFT_TIME : 0,
+-                mode: Clutter.AnimationMode.EASE_OUT_CUBIC});
++                mode: Clutter.AnimationMode.EASE_OUT_CUBIC,
++                onStopped: () => {
++                    // Reparenting a preview can stop the lift transition.
++                    if (this._drag === drag && this._dragGroup() === dragGroup)
++                        dragGroup.set_scale(LIFT_SCALE, LIFT_SCALE);
++                }});
+             dragGroup.row.get_children().forEach(island => island.add_style_class_name?.('luma-island-lifted'));
+         }
+         this._decorate();
+@@ -1141,6 +1117,12 @@
+ 
+     _dragGroup() {
+         return this._shelf._groups.find(group => group.dragging) ?? null;
++    }
++
++    syncDragLift() {
++        const group = this._dragGroup();
++        if (this._drag && group && !group.get_transition('scale-x'))
++            group.set_scale(LIFT_SCALE, LIFT_SCALE);
+     }
+ 
+     _clearGrabAllocation() {
+@@ -1156,6 +1138,7 @@
+         const group = this._dragGroup();
+         if (!group)
+             return [x, y];
++        this.syncDragLift();
+         const part = drag.group || drag.ids.length > 1 ? group : this._shelf.partActorFor(drag.grab);
+         const held = part?.get_stage() && this._shelf.groupForActor(part) === group ? part : group;
+         group.surface.remove_transition('translation-x');

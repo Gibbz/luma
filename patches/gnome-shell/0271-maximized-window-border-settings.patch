@@ -1,0 +1,43 @@
+--- a/js/ui/shelf.js
++++ b/js/ui/shelf.js
+@@ -2472,12 +2472,19 @@
+     // reach the screen there. With shelf-reserve-work-area
+     // off, windows may go under the islands and keep only the padding from
+     // every edge (Mutter's work-area inset).
++    _windowBorderSize() {
++        if (!this._settings.get_boolean('window-border-enabled'))
++            return 0;
++        const chosen = this._settings.get_user_value('window-border-size');
++        return chosen ? chosen.get_int32() : this._padding;
++    }
++
+     _syncWorkAreaInset(scale) {
+         // Mutter applies this only where an edge has no native strut.
+         // Keep the same outer padding when bands reserve other edges, and
+         // when tiling is disabled. True fullscreen bypasses the work area.
+         const keepMargin = this._workAreaTracked;
+-        const inset = keepMargin ? Math.round(this._padding * scale) : 0;
++        const inset = keepMargin ? Math.round(this._windowBorderSize() * scale) : 0;
+         global.display.set_work_area_inset?.(inset);
+     }
+ 
+@@ -2487,7 +2494,7 @@
+             inset: this._protrude ? 0 : SHELF_INSET * scale,
+             thickness: this._thickness * scale,
+             // Windows keep the padding from a band either way.
+-            margin: this._padding * scale,
++            margin: this._windowBorderSize() * scale,
+             // A spanning shelf whose outer edges do not float reaches the
+             // screen's ends; otherwise the ends stay SHELF_INSET in.
+             // Without islands the bar always spans its edge.
+@@ -2691,8 +2698,8 @@
+     _expectedWorkAreas(all) {
+         const out = {};
+         const scale = St.ThemeContext.get_for_stage(global.stage).scale_factor;
+-        const keep = this._workAreaTracked && !this._settings.get_boolean('shelf-reserve-work-area')
+-            ? Math.round(this._padding * scale) : 0;
++        const keep = this._workAreaTracked
++            ? Math.round(this._windowBorderSize() * scale) : 0;
+         for (const monitor of this._monitors ?? []) {
+             const depth = {top: keep, bottom: keep, left: keep, right: keep};
+             if (this._workAreaTracked) {

@@ -1,0 +1,29 @@
+--- a/js/ui/shelf.js
++++ b/js/ui/shelf.js
+@@ -2131,7 +2131,8 @@
+         // The carrier must keep its identity when an attach/apart preview
+         // adds or removes a ghost group. Index reuse otherwise replaces it
+         // with a previously animated band and moves it across the pointer.
+-        const carrier = this._preview?.drag ? this._groups.find(group => group.dragging) : null;
++        const dragIndex = this._resolved.findIndex(placed => placed.drag);
++        const carrier = dragIndex >= 0 ? this._groups.find(group => group.dragging) : null;
+         if (carrier)
+             this._groups.splice(this._groups.indexOf(carrier), 1);
+         const groupCount = this._resolved.length - (carrier ? 1 : 0);
+@@ -2149,7 +2150,7 @@
+         }
+ 
+         if (carrier)
+-            this._groups.push(carrier);
++            this._groups.splice(dragIndex, 0, carrier);
+ 
+         const quick = this._actionsMaterial;
+         const clockEdge = this.edgeOfIsland('clock');
+@@ -2284,6 +2285,7 @@
+         this._liveIndicator?.setShelfOrientation?.(Arrangement.isVertical(this.edgeOfIsland('live')));
+         this._live2Indicator?.setShelfOrientation?.(Arrangement.isVertical(this.edgeOfIsland('live2')));
+         this._syncActionsWashNow?.();
++        this._arrange?.syncDragLift();
+     }
+ 
+     // Put exactly `actors`, in order, in `row`; islands that belong nowhere

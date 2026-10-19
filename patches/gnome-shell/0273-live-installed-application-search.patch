@@ -1,0 +1,41 @@
+--- a/src/shell-app-cache.c
++++ b/src/shell-app-cache.c
+@@ -26,6 +26,7 @@
+  */
+ 
+ #define DEFAULT_TIMEOUT_SECONDS 5
++#define APPLICATION_UPDATE_MILLISECONDS 250
+ 
+ struct _ShellAppCache
+ {
+@@ -220,10 +221,11 @@
+ {
+   g_assert (SHELL_IS_APP_CACHE (self));
+ 
++  /* Coalesce a burst without postponing discovery until it becomes quiet. */
+   if (self->queued_update != 0)
+-    g_source_remove (self->queued_update);
+-
+-  self->queued_update = g_timeout_add_seconds_once (DEFAULT_TIMEOUT_SECONDS,
++    return;
++
++  self->queued_update = g_timeout_add_once (APPLICATION_UPDATE_MILLISECONDS,
+                                                     shell_app_cache_do_update,
+                                                     self);
+ }
+--- a/js/ui/search.js
++++ b/js/ui/search.js
+@@ -912,7 +912,12 @@
+             this._registerProvider(new AppDisplay.AppSearchProvider());
+ 
+         const appSystem = Shell.AppSystem.get_default();
+-        appSystem.connect('installed-changed', this._reloadRemoteProviders.bind(this));
++        appSystem.connect('installed-changed', () => {
++            this._reloadRemoteProviders();
++            // Keep an open application query in step with installs and removals.
++            if (this._terms.length > 0)
++                this._doSearch(provider => provider.id === 'applications');
++        });
+         this._reloadRemoteProviders();
+     }
+ 
