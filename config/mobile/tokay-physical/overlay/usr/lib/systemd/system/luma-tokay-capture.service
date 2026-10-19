@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: Apache-2.0
+[Unit]
+Description=Tokay native microphone initialization
+Requires=luma-tokay-aoc.service
+After=luma-tokay-aoc.service
+Before=greetd.service user@1000.service
+ConditionPathExists=/run/luma/ram-boot-proof.txt
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/luma-tokay-capture-start
+RemainAfterExit=yes
+TimeoutStartSec=30
+[Install]
+WantedBy=multi-user.target

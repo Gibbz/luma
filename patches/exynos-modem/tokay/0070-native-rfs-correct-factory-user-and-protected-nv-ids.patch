@@ -1,0 +1,242 @@
+Subject: [PATCH] rfs: match factory user/protected NV IDs and write protection
+
+The exact CP41 factory rfsd table at 0x182b0 is indexed by service
+fid minus one: normal 1, user 2, protected 3. The protected constructor
+independently passes 3 to the base constructor's fid field. The native
+mapping and its protected-write guard previously interchanged 2 and 3.
+
+Provenance and instruction assertions: factory-rfs-nv-file-id-audit.json.
+Five independent routing/protection regressions fail before this fix.
+The old protected fixtures also used the wrong ID; correct those inputs.
+Historical native-generated unit state must not be promoted without a
+separate provenance and migration review. No physical CP/NV test claimed.
+
+---
+diff --git a/crates/exynos-modem/src/rfs.rs b/crates/exynos-modem/src/rfs.rs
+--- a/crates/exynos-modem/src/rfs.rs
++++ b/crates/exynos-modem/src/rfs.rs
+@@ -68,8 +68,9 @@
+ fn nv_name(fid: u32) -> Option<&'static str> {
+     match fid {
+         1 => Some("nv_normal.bin"),
+-        2 => Some("nv_protected.bin"),
+-        3 => Some("nv_user.bin"),
++        // Exact factory table at 0x182b0 uses service fid - 1 as its index.
++        2 => Some("nv_user.bin"),
++        3 => Some("nv_protected.bin"),
+         _ => None,
+     }
+ }
+@@ -438,7 +439,7 @@
+                     // The -1 cursor sentinel needs separate protocol review.
+                     let source_size = file_size(&self.files[&fid].fd) as u64;
+                     let end = u64::from(off) + u64::from(iolen);
+-                    if fid == 2
++                    if fid == 3
+                         || !self.files[&fid].nv_file
+                         || off == u32::MAX
+                         || iolen == 0
+@@ -1242,7 +1243,7 @@
+             RFS_NV_BACKUP_AND_CNF,
+         ] {
+             let start = std::fs::metadata(&device).unwrap().len() as usize;
+-            rfs.handle(&frame(cmd, 7, &2u32.to_le_bytes()));
++            rfs.handle(&frame(cmd, 7, &3u32.to_le_bytes()));
+             assert_eq!(
+                 &std::fs::read(&device).unwrap()[start..],
+                 frame(
+@@ -1250,7 +1251,7 @@
+                     7,
+                     &[
+                         RFS_STATUS_INVALID_TRANSFER.to_le_bytes(),
+-                        2u32.to_le_bytes()
++                        3u32.to_le_bytes()
+                     ]
+                     .concat()
+                 )
+@@ -1274,7 +1275,7 @@
+             Store::new(root.clone()),
+             false,
+         );
+-        let body = [2u32, 0, 4, IO_WRITE]
++        let body = [3u32, 0, 4, IO_WRITE]
+             .into_iter()
+             .flat_map(u32::to_le_bytes)
+             .collect::<Vec<_>>();
+@@ -1286,7 +1287,7 @@
+                 7,
+                 &[
+                     RFS_STATUS_INVALID_TRANSFER.to_le_bytes(),
+-                    2u32.to_le_bytes()
++                    3u32.to_le_bytes()
+                 ]
+                 .concat()
+             )
+@@ -1992,4 +1993,167 @@
+         assert!(!rfs.files.contains_key(&40));
+         std::fs::remove_dir_all(root).unwrap();
+     }
++
++    // Golden IDs from the exact factory rfsd table at VA 0x182b0, indexed
++    // by service fid - 1, independently corroborated by the protected ctor.
++    #[test]
++    fn factory_nv_file_id_table_matches_all_three_names() {
++        for (fid, name) in [
++            (1, "nv_normal.bin"),
++            (2, "nv_user.bin"),
++            (3, "nv_protected.bin"),
++        ] {
++            assert_eq!(nv_name(fid), Some(name), "factory fid {fid}");
++        }
++    }
++
++    struct FactoryNvFixture {
++        root: PathBuf,
++        device: PathBuf,
++        rfs: Rfs,
++    }
++
++    impl FactoryNvFixture {
++        fn new(label: &str) -> Self {
++            let root = std::env::temp_dir().join(format!(
++                "rfs-factory-fileids-{label}-{}",
++                std::process::id()
++            ));
++            let _ = std::fs::remove_dir_all(&root);
++            std::fs::create_dir_all(root.join("efs")).unwrap();
++            for (name, byte) in [
++                ("nv_normal.bin", b'N'),
++                ("nv_user.bin", b'U'),
++                ("nv_protected.bin", b'P'),
++            ] {
++                crate::store::write_test_fixture(root.join("efs").join(name), &[byte; 64]).unwrap();
++            }
++            let device = root.with_extension("dev");
++            let rfs = Rfs::new(
++                File::create(&device).unwrap(),
++                Store::new(root.clone()),
++                false,
++            );
++            Self { root, device, rfs }
++        }
++    }
++
++    impl Drop for FactoryNvFixture {
++        fn drop(&mut self) {
++            let _ = std::fs::remove_dir_all(&self.root);
++            let _ = std::fs::remove_file(&self.device);
++        }
++    }
++
++    fn factory_nv_read_fixture(fid: u32, byte: u8, label: &str) {
++        let mut f = FactoryNvFixture::new(label);
++        f.rfs.handle(&frame(
++            RFS_IO_REQUEST,
++            0x1234,
++            &[
++                fid.to_le_bytes(),
++                0u32.to_le_bytes(),
++                4u32.to_le_bytes(),
++                IO_READ.to_le_bytes(),
++            ]
++            .concat(),
++        ));
++        let mut body = [fid.to_le_bytes(), 0u32.to_le_bytes(), 4u32.to_le_bytes()].concat();
++        body.extend([byte; 4]);
++        assert_eq!(
++            std::fs::read(&f.device).unwrap(),
++            frame(RFS_READ, 0x1234, &body)
++        );
++    }
++
++    #[test]
++    fn factory_nv_file_id_2_reads_user_not_protected() {
++        factory_nv_read_fixture(2, b'U', "user-read");
++    }
++
++    #[test]
++    fn factory_nv_file_id_3_reads_protected_not_user() {
++        factory_nv_read_fixture(3, b'P', "protected-read");
++    }
++
++    #[test]
++    fn factory_nv_file_id_2_user_range_write_commits_only_user() {
++        let mut f = FactoryNvFixture::new("user-write");
++        f.rfs.handle(&frame(
++            RFS_IO_REQUEST,
++            0x1234,
++            &[
++                2u32.to_le_bytes(),
++                0u32.to_le_bytes(),
++                4u32.to_le_bytes(),
++                IO_WRITE.to_le_bytes(),
++            ]
++            .concat(),
++        ));
++        assert_eq!(
++            std::fs::read(&f.device).unwrap(),
++            frame(
++                RFS_WRITE,
++                0x1234,
++                &[2u32.to_le_bytes(), 0u32.to_le_bytes(), 4u32.to_le_bytes()].concat()
++            )
++        );
++        let mut body = [0u32.to_le_bytes(), 2u32.to_le_bytes(), 4u32.to_le_bytes()].concat();
++        body.extend(b"NEW!");
++        f.rfs.handle(&frame(RFS_WRITE, 0x1234, &body));
++        let path = f.rfs.store.read_path(Kind::Efs, "nv_user.bin").unwrap();
++        let mut expected = [b'U'; 64];
++        expected[..4].copy_from_slice(b"NEW!");
++        assert_eq!(std::fs::read(path).unwrap(), expected);
++        assert_eq!(
++            std::fs::read(f.root.join("efs/nv_user.bin")).unwrap(),
++            [b'U'; 64]
++        );
++        assert_eq!(
++            std::fs::read(f.root.join("efs/nv_protected.bin")).unwrap(),
++            [b'P'; 64]
++        );
++        assert_eq!(
++            std::fs::read(f.root.join("efs/nv_normal.bin")).unwrap(),
++            [b'N'; 64]
++        );
++    }
++
++    #[test]
++    fn factory_nv_file_id_3_protected_write_is_rejected_even_with_user_seed() {
++        let mut f = FactoryNvFixture::new("protected-write");
++        f.rfs.handle(&frame(
++            RFS_IO_REQUEST,
++            0x1234,
++            &[
++                3u32.to_le_bytes(),
++                0u32.to_le_bytes(),
++                4u32.to_le_bytes(),
++                IO_WRITE.to_le_bytes(),
++            ]
++            .concat(),
++        ));
++        assert_eq!(
++            std::fs::read(&f.device).unwrap(),
++            frame(
++                RFS_OP_STATUS,
++                0x1234,
++                &[
++                    RFS_STATUS_INVALID_TRANSFER.to_le_bytes(),
++                    3u32.to_le_bytes()
++                ]
++                .concat()
++            )
++        );
++        assert!(!f.root.join("efs/nv_user.bin.part").exists());
++        assert!(!f.root.join("efs/nv_protected.bin.part").exists());
++        assert_eq!(
++            std::fs::read(f.root.join("efs/nv_user.bin")).unwrap(),
++            [b'U'; 64]
++        );
++        assert_eq!(
++            std::fs::read(f.root.join("efs/nv_protected.bin")).unwrap(),
++            [b'P'; 64]
++        );
++    }
+ }

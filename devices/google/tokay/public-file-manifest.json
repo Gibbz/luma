@@ -1,0 +1,272 @@
+[
+  {
+    "path": "config/mobile/tokay-physical/kernel-rfs2.config",
+    "sha256": "3c6716786b0737a915dc55f8dce8d6d885b8dba296766aa2d945355821a7cb3d",
+    "bytes": 207823
+  },
+  {
+    "path": "config/mobile/tokay-physical/overlay/etc/NetworkManager/conf.d/90-tokay-provisioned-address.conf",
+    "sha256": "4b847a3264ca1ca9c61eebfaf37ec7716fb1c737fc9ce086da1eb1b2324190e7",
+    "bytes": 194
+  },
+  {
+    "path": "config/mobile/tokay-physical/overlay/etc/luma/device-data/gmobile/display-panels/google,tokay.json",
+    "sha256": "20972847dc46214a904cce45259a94446c9c9145293b8418e1498c961b25d6e2",
+    "bytes": 283
+  },
+  {
+    "path": "config/mobile/tokay-physical/overlay/usr/lib/systemd/system/luma-tokay-aoc.service",
+    "sha256": "99c2200928b3fd8c8c38f3c143c41e3775d560fc13a8f0fc41dde5325a13cc9c",
+    "bytes": 312
+  },
+  {
+    "path": "config/mobile/tokay-physical/overlay/usr/lib/systemd/system/luma-tokay-bluetooth.service",
+    "sha256": "a9243ab60253858704b72c705a9b60619cd4e95100e0896dbdf27fd5f2b7c0bb",
+    "bytes": 421
+  },
+  {
+    "path": "config/mobile/tokay-physical/overlay/usr/lib/systemd/system/luma-tokay-capture.service",
+    "sha256": "78d5cea09530d8ec9daf9cee0244f0cbe78a57602a7cf5edd8c7fc0649ce3a25",
+    "bytes": 393
+  },
+  {
+    "path": "config/mobile/tokay-physical/overlay/usr/lib/systemd/system/luma-tokay-speaker-calibration.service",
+    "sha256": "38ef2658062ec60914470e9ee849bcd2bf3deb8978ec632d309be3fd3fa5a13d",
+    "bytes": 419
+  },
+  {
+    "path": "config/mobile/tokay-physical/overlay/usr/lib/systemd/system/luma-tokay-wifi.service",
+    "sha256": "67a0f6dbab3a5bc11c15fb28b1a32df4c1c9bef839245d0928f14e81c6030419",
+    "bytes": 361
+  },
+  {
+    "path": "config/mobile/tokay-physical/overlay/usr/libexec/luma-tokay-aoc-start",
+    "sha256": "166b5ba53c5f222edcdb4d7be430317aa57d4a48fcface60adbf1fd8b4019c5b",
+    "bytes": 300
+  },
+  {
+    "path": "config/mobile/tokay-physical/overlay/usr/libexec/luma-tokay-bluetooth-start",
+    "sha256": "c97a7d3532809907cad697255f397216d4f88ec18cd8bec36361e88c81c09956",
+    "bytes": 614
+  },
+  {
+    "path": "config/mobile/tokay-physical/overlay/usr/libexec/luma-tokay-capture-start",
+    "sha256": "39cb915521b5cccfadaff6a04ebc8e2158445588f2c6eb221910298756a180dc",
+    "bytes": 1090
+  },
+  {
+    "path": "config/mobile/tokay-physical/overlay/usr/libexec/luma-tokay-radio-check",
+    "sha256": "a73dc9e08e77e103a75f996bf3d131cfc1de91c81a4c14bf3081ec8830022cb2",
+    "bytes": 692
+  },
+  {
+    "path": "config/mobile/tokay-physical/overlay/usr/libexec/luma-tokay-speaker-calibrate",
+    "sha256": "961785f73c0b62eb40648834a828ab8bf0e5357bb733d2688bd3c3f78a14c565",
+    "bytes": 7334
+  },
+  {
+    "path": "config/mobile/tokay-physical/overlay/usr/libexec/luma-tokay-speaker-ready",
+    "sha256": "a017522a76b1ade6a9d84f81d461aabbb33a6312e71db1686d547675aa718904",
+    "bytes": 483
+  },
+  {
+    "path": "config/mobile/tokay-physical/overlay/usr/libexec/luma-tokay-wifi-start",
+    "sha256": "4b8d5efce9643d7f9cc5d7f924e07468c52282c322d58492474d6d7eda10ded0",
+    "bytes": 1076
+  },
+  {
+    "path": "config/mobile/tokay-physical/overlay/usr/share/alsa/ucm2/Luma/Tokay/HiFi.conf",
+    "sha256": "13e7843ebf7d342807e3adf309fac83b350a6fd43b69d5d860762065fac37ff1",
+    "bytes": 1151
+  },
+  {
+    "path": "config/mobile/tokay-physical/overlay/usr/share/alsa/ucm2/conf.d/aoc-audio/aoc-audio.conf",
+    "sha256": "c14667199579874fb9ad3f55386e646bcaf7ecee61d31df85987230f1bb67a43",
+    "bytes": 392
+  },
+  {
+    "path": "config/mobile/tokay-physical/overlay/usr/share/luma/tokay/aoc-firmware.sha256",
+    "sha256": "67ca11a37df7088d8617a6364a630883152d1259678c2c7c63058deb81aa2d16",
+    "bytes": 107
+  },
+  {
+    "path": "config/mobile/tokay-physical/overlay/usr/share/luma/tokay/audio-firmware.sha256",
+    "sha256": "70635b033d34c64703c8e3e1351b589857ad4a595d9a288d9eb839afba4793eb",
+    "bytes": 372
+  },
+  {
+    "path": "config/mobile/tokay-physical/overlay/usr/share/luma/tokay/audio-modules.sha256",
+    "sha256": "9bdacdad010ec4436afed7f3d9d3d4440b9609e7bfb90cbaa3e609cbe0480711",
+    "bytes": 939
+  },
+  {
+    "path": "config/mobile/tokay-physical/overlay/usr/share/luma/tokay/bluetooth-firmware.sha256",
+    "sha256": "1b99829be9b498077ec29e665c7c89a71a17cb5b0a93998ad5a3113c9cb550f0",
+    "bytes": 208
+  },
+  {
+    "path": "config/mobile/tokay-physical/overlay/usr/share/luma/tokay/radio-modules.sha256",
+    "sha256": "40ca02d8f1e907e9d9155ab00911c20588a8560e73e8afa751aef007d308a0dc",
+    "bytes": 987
+  },
+  {
+    "path": "config/mobile/tokay-physical/overlay/usr/share/luma/tokay/wifi-firmware.sha256",
+    "sha256": "ad9d812273a4a808fea8097f5d7220f80f75d6fa8f45ea8d4dba9baf44575259",
+    "bytes": 464
+  },
+  {
+    "path": "config/mobile/tokay-physical/ram-init.in",
+    "sha256": "51941e17bd859972612caa2e7e9a8339837b34ce38a3ac034267c29b2df7fd5e",
+    "bytes": 15354
+  },
+  {
+    "path": "config/mobile/tokay-physical/ram-inputs.example.json",
+    "sha256": "a3a10c8f06951a53a133c384aea07573d8c4eb9a38b1ac920da9ad020c38372f",
+    "bytes": 899
+  },
+  {
+    "path": "devices/google/tokay/INSTALL.md",
+    "sha256": "c3847ef245567119b4213953d9c4058e316696132310d01535f189948a04acfe",
+    "bytes": 1924
+  },
+  {
+    "path": "devices/google/tokay/README.md",
+    "sha256": "9eafe852f1883d2ef45b298db603413638a40063f52920e31c3e1263cceaffe0",
+    "bytes": 4035
+  },
+  {
+    "path": "devices/google/tokay/source-pins.json",
+    "sha256": "7b9bba78a64397526c7da207df6bfef0b38a8e087e8cfb28a9efaa7af28f9500",
+    "bytes": 1305
+  },
+  {
+    "path": "patches/exynos-modem/tokay/0023-native-modem-store-durability.patch",
+    "sha256": "51c6a4b76801e7684c4801f9adbbf4dc0d635fa8666dd1b0ae08aa08cae76154",
+    "bytes": 3243
+  },
+  {
+    "path": "patches/exynos-modem/tokay/0024-native-rfs-report-write-failures.patch",
+    "sha256": "143e4a756382a6693086b02498a57b60c3001f65eec1b67d88919fdcbd654446",
+    "bytes": 8884
+  },
+  {
+    "path": "patches/exynos-modem/tokay/0025-native-gipc-pigweed-streams-and-capability-files.patch",
+    "sha256": "6a4c01713f7e0d249e5c68a55276c95808f3b537a65e7d3c19677bd72b63b853",
+    "bytes": 28966
+  },
+  {
+    "path": "patches/exynos-modem/tokay/0044-native-rfs-confine-carrier-reads.patch",
+    "sha256": "4839e9dea368fd81b5ff0fb1f4eb66bc3b7c69550f44a96691d987641968c914",
+    "bytes": 7872
+  },
+  {
+    "path": "patches/exynos-modem/tokay/0045-native-rfs-refresh-read-view-after-commit.patch",
+    "sha256": "3abf321144a2e7a861273349451804982e92b91d01bbfd34262537af055a293c",
+    "bytes": 5432
+  },
+  {
+    "path": "patches/exynos-modem/tokay/0047-native-oem-publish-only-complete-transfers.patch",
+    "sha256": "c46a560726f993918a41152c0e368e3f5ca26e14b975d005667449f7bd09c547",
+    "bytes": 13730
+  },
+  {
+    "path": "patches/exynos-modem/tokay/0048-native-rfs-preserve-nv-write-ranges.patch",
+    "sha256": "8a98ab7e954254f59c2f433fee90ea75ebf1809a494f25bf8444bd01b42eeae0",
+    "bytes": 12328
+  },
+  {
+    "path": "patches/exynos-modem/tokay/0049-native-store-private-durable-directories.patch",
+    "sha256": "b33ce853c36f54502c283c8c4adb7f03cabc5a372b9eab6941d906fbd195fddd",
+    "bytes": 4693
+  },
+  {
+    "path": "patches/exynos-modem/tokay/0050-native-rfs-correct-protected-control-semantics.patch",
+    "sha256": "8eca6530c5eb6e30a55f6295d9e9fa686e74fbb46255c1c655fe2ec0e3114609",
+    "bytes": 7392
+  },
+  {
+    "path": "patches/exynos-modem/tokay/0054-native-rfs-fail-session-on-reply-error.patch",
+    "sha256": "fe004b448eae862eeb6cd5a01cc17c0d149b23821e728ea1f1364d35c7a398af",
+    "bytes": 11989
+  },
+  {
+    "path": "patches/exynos-modem/tokay/0055-native-nv-publish-data-checksum-generations.patch",
+    "sha256": "8b48ca8629eb0d2c627099e130ca277f21e5c8d59da78092b72d356d1e95a34d",
+    "bytes": 28710
+  },
+  {
+    "path": "patches/exynos-modem/tokay/0056-native-nv-verify-seeds-and-reject-unseeded-writes.patch",
+    "sha256": "911992c9235a0f0719c25f9a320903fe953d317b8a444c7af41fd5e9adc04766",
+    "bytes": 32924
+  },
+  {
+    "path": "patches/exynos-modem/tokay/0064-native-rfs-stop-on-failed-read-ack.patch",
+    "sha256": "4ec2194bc14e27d1866cdcdb3a00edb50ae1704222d4264bf2224c681c0d57c8",
+    "bytes": 7756
+  },
+  {
+    "path": "patches/exynos-modem/tokay/0065-native-rfs-reject-stale-read-ack-tokens.patch",
+    "sha256": "eee82a336386277d957af026ef2f9c4854dc194a9fa8a4daddc0233beedc5946",
+    "bytes": 4943
+  },
+  {
+    "path": "patches/exynos-modem/tokay/0066-native-rfs-report-file-errors-and-preserve-open-handles.patch",
+    "sha256": "fb8de2626e44674f6f95f01fde92dcddf8ec53c77f96161697ad0d432e6a8e99",
+    "bytes": 9880
+  },
+  {
+    "path": "patches/exynos-modem/tokay/0068-native-rfs-match-factory-success-status-wire-layout.patch",
+    "sha256": "73474e4ed2f5d54a5e97f203dcfe2d5e2bb179d633290ef977e8cb5de0921d80",
+    "bytes": 16906
+  },
+  {
+    "path": "patches/exynos-modem/tokay/0070-native-rfs-correct-factory-user-and-protected-nv-ids.patch",
+    "sha256": "e64e9bf0b63b51a4761932c9112fa83ad04f515dc6cc7d8cc38f4c49af5ffcb4",
+    "bytes": 8424
+  },
+  {
+    "path": "patches/exynos-modem/tokay/0071-native-rfs-open-verified-nv-files-with-peer-ack-gate.patch",
+    "sha256": "a3b27cdd2685922f5cb5ab1d8a3c32f1c4e21c9e56c077a7219ab6c3184085f4",
+    "bytes": 13988
+  },
+  {
+    "path": "patches/exynos-modem/tokay/README.md",
+    "sha256": "ad5701b62efb5f7ad2174e0239c715f8a752e825a55daf7891df28211fd5a18c",
+    "bytes": 1492
+  },
+  {
+    "path": "patches/exynos-modem/tokay/series",
+    "sha256": "757c490ded7165ea98e3cc5ee2f23d919b1674e0e693abd04efc3ecb18c2a8fb",
+    "bytes": 974
+  },
+  {
+    "path": "patches/gmobile/0001-google-tokay-panel-cutout.patch",
+    "sha256": "73e5937101634c3ba9b1cd64ac6c649c285ce0d458d505157b0d5c858485139c",
+    "bytes": 1227
+  },
+  {
+    "path": "patches/gmobile/README.md",
+    "sha256": "842bbea232b7f458c6ec1bc4e79c3d9a795d4a3aa59b9a4db06b17014ba1fd73",
+    "bytes": 1712
+  },
+  {
+    "path": "patches/linux-zumapro/tokay/0001-known-good-rfs2-source.patch",
+    "sha256": "fa7da0ad83be707c4ef34437371ee887f5ed4c1ef909a627ee82f623a3dd7fc6",
+    "bytes": 1983528
+  },
+  {
+    "path": "patches/linux-zumapro/tokay/0002-offline-runtime-tx-fence.patch",
+    "sha256": "34f6efdf239a937c6e5a96b3ca9761b39f6c6c7e4ef599903a496ea0a638211c",
+    "bytes": 6751
+  },
+  {
+    "path": "patches/linux-zumapro/tokay/README.md",
+    "sha256": "aa6c792726cad07c3507c63037357055adfdc3ea8431ad54bb708fc822e959d6",
+    "bytes": 1770
+  },
+  {
+    "path": "scripts/mobile/render-tokay-ram-init.py",
+    "sha256": "239dd21ecc609da6c93eac95fff961af43da7cdfdffdd7b4e35ee65bbe685c2a",
+    "bytes": 941
+  }
+]

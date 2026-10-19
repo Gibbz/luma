@@ -1,0 +1,15 @@
+#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+set -eu
+/usr/libexec/luma-tokay-radio-check
+sha256sum --quiet -c /usr/share/luma/tokay/bluetooth-firmware.sha256
+test "$(readlink /usr/lib/firmware/brcm/BCM.google,tokay.hcd)" = BCM_200.hcd
+python3 - <<'CHECK'
+from pathlib import Path
+addr=Path('/proc/device-tree/bluetooth/local-bd-address').read_bytes()
+assert len(addr)==6 and addr[-1]&3==0 and any(addr)
+CHECK
+grep -q chre_bt_offload_ctl /sys/kernel/debug/aoc/services
+grep -q chre_bt_offload_data_tx /sys/kernel/debug/aoc/services
+grep -q chre_bt_offload_data_rx /sys/kernel/debug/aoc/services
+modprobe hci_aoc

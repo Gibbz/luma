@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: Apache-2.0
+[Unit]
+Description=Tokay experimental native wifi initialization
+After=systemd-udev-trigger.service
+Before=NetworkManager.service
+ConditionPathExists=/run/luma/ram-boot-proof.txt
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/luma-tokay-wifi-start
+RemainAfterExit=yes
+TimeoutStartSec=40
+[Install]
+WantedBy=multi-user.target

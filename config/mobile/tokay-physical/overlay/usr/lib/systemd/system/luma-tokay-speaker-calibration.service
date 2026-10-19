@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: Apache-2.0
+[Unit]
+Description=Tokay native per-unit speaker protection calibration
+Requires=luma-tokay-capture.service
+After=luma-tokay-capture.service
+Before=greetd.service user@1000.service
+ConditionPathExists=/run/luma/ram-boot-proof.txt
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/luma-tokay-speaker-calibrate
+RemainAfterExit=yes
+TimeoutStartSec=30
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,79 @@
+diff --git a/crates/exynos-modem/src/store.rs b/crates/exynos-modem/src/store.rs
+index 2b4a456..97b9f0c 100644
+--- a/crates/exynos-modem/src/store.rs
++++ b/crates/exynos-modem/src/store.rs
+@@ -29,8 +29,9 @@
+ //! back. That is the discipline downstream's own efs directory shows, where
+ //! `nv_normal.bin` sits beside a `.tmp` and an `.md5`.
+ 
+-use std::fs;
++use std::fs::{self, File, OpenOptions};
+ use std::io;
++use std::os::unix::fs::OpenOptionsExt;
+ use std::path::{Path, PathBuf};
+ 
+ /// The default writable root. `/var/lib` is on the (writable) rootfs; the
+@@ -122,8 +123,25 @@ impl Store {
+     /// Publish a completed write. Atomic: readers see the old file or the new
+     /// one, never a half-written mixture.
+     pub fn commit(&self, kind: Kind, name: &str) -> io::Result<PathBuf> {
+-        let dest = self.dir(kind)?.join(name);
+-        fs::rename(self.part(kind, name)?, &dest)?;
++        let directory = self.dir(kind)?;
++        let dest = directory.join(name);
++        let part = self.part(kind, name)?;
++        // Atomic rename alone does not make either the file contents or its
++        // directory entry durable across power loss. Never publish a symlink
++        // as modem state, and propagate synchronization failures to callers.
++        let staged = OpenOptions::new()
++            .read(true)
++            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
++            .open(&part)?;
++        if !staged.metadata()?.is_file() {
++            return Err(io::Error::new(
++                io::ErrorKind::InvalidData,
++                "state staging file is not regular",
++            ));
++        }
++        staged.sync_all()?;
++        fs::rename(&part, &dest)?;
++        File::open(directory)?.sync_all()?;
+         Ok(dest)
+     }
+ }
+@@ -172,4 +190,35 @@ mod tests {
+         assert!(!part.exists(), "the .part is consumed by the rename");
+         fs::remove_dir_all(&root).ok();
+     }
++    #[test]
++    fn missing_stage_preserves_committed_state() {
++        let root = tmp("missing-stage");
++        let s = Store::new(root.clone());
++        fs::create_dir_all(root.join("efs")).unwrap();
++        fs::write(s.own(Kind::Efs, "nv_normal.bin"), b"original").unwrap();
++        assert!(s.commit(Kind::Efs, "nv_normal.bin").is_err());
++        assert_eq!(
++            fs::read(s.own(Kind::Efs, "nv_normal.bin")).unwrap(),
++            b"original"
++        );
++        fs::remove_dir_all(root).unwrap();
++    }
++
++    #[test]
++    fn symlink_stage_preserves_committed_state_and_target() {
++        let root = tmp("symlink-stage");
++        let s = Store::new(root.clone());
++        fs::create_dir_all(root.join("efs")).unwrap();
++        fs::write(s.own(Kind::Efs, "nv_normal.bin"), b"original").unwrap();
++        let target = root.join("other");
++        fs::write(&target, b"untouched").unwrap();
++        std::os::unix::fs::symlink(&target, s.part(Kind::Efs, "nv_normal.bin").unwrap()).unwrap();
++        assert!(s.commit(Kind::Efs, "nv_normal.bin").is_err());
++        assert_eq!(
++            fs::read(s.own(Kind::Efs, "nv_normal.bin")).unwrap(),
++            b"original"
++        );
++        assert_eq!(fs::read(target).unwrap(), b"untouched");
++        fs::remove_dir_all(root).unwrap();
++    }
+ }

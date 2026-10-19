@@ -1,0 +1,29 @@
+#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+# Capture-only: no speaker PCM stream is opened by this service.
+set -eu
+/usr/libexec/luma-tokay-radio-check
+sha256sum --quiet -c /usr/share/luma/tokay/audio-modules.sha256
+sha256sum --quiet -c /usr/share/luma/tokay/audio-firmware.sha256
+modprobe snd_soc_google_aoc
+modprobe snd_soc_cs35l41_spi
+python3 - <<'CARD'
+from pathlib import Path
+import time
+for attempt in range(50):
+ p=Path('/sys/class/sound/card0/id')
+ if p.exists():
+  assert p.read_text().strip()=='aocaudio','Unexpected card: refuse to change mixer'
+  break
+ time.sleep(.1)
+else:raise RuntimeError('Native AoC sound card not registered within five seconds')
+CARD
+for prefix in '' 'R '; do
+ amixer -q -c 0 cset "name=${prefix}Digital PCM Volume" 0
+ amixer -q -c 0 cset "name=${prefix}Analog PCM Volume" 0
+ amixer -q -c 0 cset "name=${prefix}PCM Source" DSP
+ amixer -q -c 0 cset "name=${prefix}DSP RX2 Source" ASPRX1
+ amixer -q -c 0 cset "name=${prefix}PCM Soft Ramp" '.5ms'
+ amixer -q -c 0 cset "name=${prefix}DSP1 Preload Switch" on
+done
+alsaucm -c hw:0 list _verbs >/dev/null

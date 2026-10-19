@@ -1,0 +1,177 @@
+--- a/crates/exynos-modem/src/rfs.rs
++++ b/crates/exynos-modem/src/rfs.rs
+@@ -41,7 +41,12 @@
+ const RFS_OPEN: u16 = 0x0004;
+ const RFS_CLOSE: u16 = 0x0005;
+ const RFS_IO_REQUEST: u16 = 0x0006;
+-const RFS_OPEN_FID: u16 = 0x0007;
++// Exact factory protected-NV handler: command 7 is UNPROTECT, not OPEN_FID.
++// These controls require the full protection/backup transaction state machine.
++const RFS_NV_UNPROTECT: u16 = 0x0007;
++const RFS_NV_PROTECT: u16 = 0x0008;
++const RFS_NV_BACKUP: u16 = 0x0101;
++const RFS_NV_BACKUP_AND_CNF: u16 = 0x0102;
+ 
+ const CHUNK: usize = 2012; // downstream rfsd's chunk size
+ const FRAME_MAX: usize = 4096;
+@@ -122,7 +127,7 @@
+ 
+ #[derive(Default)]
+ struct Fent {
+-    nv_file: bool,     // only OPEN_FID/implicit NV handles may write state
++    nv_file: bool,     // only implicit NV handles may write state
+     fd: Option<File>,  // open file (read source)
+     wfd: Option<File>, // tmpfs write sink
+     size: i64,         // file size reported at OPEN
+@@ -243,7 +248,7 @@
+         self.send(&r);
+     }
+ 
+-    fn open_fid(&mut self, fid: u32) {
++    fn open_nv(&mut self, fid: u32) {
+         // Our copy if the CP has ever written one, else the factory image.
+         let src = nv_name(fid)
+             .and_then(|n| self.store.read_path(Kind::Efs, n))
+@@ -300,18 +305,16 @@
+                 );
+                 self.op_status(token, fid, size as u32);
+             }
+-            RFS_OPEN_FID => {
+-                // 7: open an NV file by id
++            RFS_NV_UNPROTECT | RFS_NV_PROTECT | RFS_NV_BACKUP | RFS_NV_BACKUP_AND_CNF => {
+                 if n < 0xc {
+                     return;
+                 }
+                 let fid = le32(&f[8..]);
+-                self.open_fid(fid);
+-                let size = self.files[&fid].size;
+-                if self.verbose {
+-                    eprintln!("rfs: OPEN_FID fid={} size={}", fid, size);
+-                }
+-                self.op_status(token, fid, size as u32);
++                // Do not claim protection or backup completed when the
++                // integrity sidecars, acknowledgement transitions and backup
++                // flags are not yet implemented. In particular, command 7
++                // must never silently replace an open handle or unlock NV.
++                self.op_error(token, fid, RFS_STATUS_INVALID_TRANSFER);
+             }
+             RFS_IO_REQUEST => {
+                 // 6: start a read or write
+@@ -329,10 +332,10 @@
+                     );
+                 }
+                 // NV files (1/2/3) are implicitly open in downstream rfsd, so
+-                // the CP may IO_REQUEST them without a preceding OPEN_FID.  Open
++                // the CP may IO_REQUEST them without a preceding path OPEN. Open
+                 // on demand (read source = factory RO nv_*.bin).
+                 if !self.files.contains_key(&fid) && nv_name(fid).is_some() {
+-                    self.open_fid(fid);
++                    self.open_nv(fid);
+                 }
+                 // Never leave a CP request unanswered: a silently dropped
+                 // IO_REQUEST makes the CP wait/time out and can stall its IPC
+@@ -358,7 +361,8 @@
+                     // The -1 cursor sentinel needs separate protocol review.
+                     let source_size = file_size(&self.files[&fid].fd) as u64;
+                     let end = u64::from(off) + u64::from(iolen);
+-                    if !self.files[&fid].nv_file
++                    if fid == 2
++                        || !self.files[&fid].nv_file
+                         || off == u32::MAX
+                         || iolen == 0
+                         || (source_size != 0 && end > source_size)
+@@ -918,7 +922,7 @@
+             Store::new(root.clone()),
+             false,
+         );
+-        rfs.open_fid(1);
++        rfs.open_nv(1);
+         let mut old_inode = File::open(&path).unwrap();
+         for (token, content) in [(7, &b"NVNV"[..]), (8, &b"updated"[..])] {
+             rfs.handle(&write_request(token, content.len() as u32));
+@@ -932,7 +936,7 @@
+             let mut expected = b"original factory bytes".to_vec();
+             expected[..content.len()].copy_from_slice(content);
+             assert_eq!(readback, expected);
+-            // Exercise the public wire read path without CLOSE/OPEN_FID.
++            // Exercise the public wire read path without CLOSE/OPEN.
+             let before_response = std::fs::metadata(&device).unwrap().len() as usize;
+             let request = [1u32, 0, content.len() as u32, IO_READ]
+                 .into_iter()
+@@ -1093,4 +1097,76 @@
+         std::fs::remove_dir_all(root).unwrap();
+         std::fs::remove_file(device).unwrap();
+     }
++    #[test]
++    fn unimplemented_protect_and_backup_controls_never_acknowledge_success() {
++        let root =
++            std::env::temp_dir().join(format!("rfs-protected-controls-{}", std::process::id()));
++        let _ = std::fs::remove_dir_all(&root);
++        let device = root.with_extension("dev");
++        let mut rfs = Rfs::new(
++            File::create(&device).unwrap(),
++            Store::new(root.clone()),
++            false,
++        );
++        for cmd in [
++            RFS_NV_UNPROTECT,
++            RFS_NV_PROTECT,
++            RFS_NV_BACKUP,
++            RFS_NV_BACKUP_AND_CNF,
++        ] {
++            let start = std::fs::metadata(&device).unwrap().len() as usize;
++            rfs.handle(&frame(cmd, 7, &2u32.to_le_bytes()));
++            assert_eq!(
++                &std::fs::read(&device).unwrap()[start..],
++                frame(
++                    RFS_OP_STATUS,
++                    7,
++                    &[
++                        RFS_STATUS_INVALID_TRANSFER.to_le_bytes(),
++                        2u32.to_le_bytes()
++                    ]
++                    .concat()
++                )
++            );
++            assert!(rfs.files.is_empty());
++            assert!(!root.exists());
++        }
++        std::fs::remove_file(device).unwrap();
++    }
++
++    #[test]
++    fn protected_nv_cannot_be_written_without_qualified_unlock_state() {
++        let root = std::env::temp_dir().join(format!("rfs-protected-write-{}", std::process::id()));
++        let _ = std::fs::remove_dir_all(&root);
++        std::fs::create_dir_all(root.join("efs")).unwrap();
++        let path = root.join("efs/nv_protected.bin");
++        std::fs::write(&path, b"protected original").unwrap();
++        let device = root.with_extension("dev");
++        let mut rfs = Rfs::new(
++            File::create(&device).unwrap(),
++            Store::new(root.clone()),
++            false,
++        );
++        let body = [2u32, 0, 4, IO_WRITE]
++            .into_iter()
++            .flat_map(u32::to_le_bytes)
++            .collect::<Vec<_>>();
++        rfs.handle(&frame(RFS_IO_REQUEST, 7, &body));
++        assert_eq!(
++            std::fs::read(&device).unwrap(),
++            frame(
++                RFS_OP_STATUS,
++                7,
++                &[
++                    RFS_STATUS_INVALID_TRANSFER.to_le_bytes(),
++                    2u32.to_le_bytes()
++                ]
++                .concat()
++            )
++        );
++        assert_eq!(std::fs::read(&path).unwrap(), b"protected original");
++        assert!(!root.join("efs/nv_protected.bin.part").exists());
++        std::fs::remove_dir_all(root).unwrap();
++        std::fs::remove_file(device).unwrap();
++    }
+ }

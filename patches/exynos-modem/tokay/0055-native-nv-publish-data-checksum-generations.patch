@@ -1,0 +1,728 @@
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -464,6 +464,7 @@
+ dependencies = [
+  "lexopt",
+  "libc",
++ "md5",
+  "prost",
+  "prost-build",
+  "protox",
+@@ -788,6 +789,12 @@
+ dependencies = [
+  "logos-codegen 0.16.1",
+ ]
++
++[[package]]
++name = "md5"
++version = "0.8.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "7ebb8d8732c6a6df3d8f032a82911cfc747e00efb95cc46e8d0acd5b5b88570c"
+ 
+ [[package]]
+ name = "memchr"
+--- a/crates/exynos-modem/Cargo.toml
++++ b/crates/exynos-modem/Cargo.toml
+@@ -17,6 +17,7 @@
+ lexopt = "0.3"
+ # Raw ioctl()/poll() for the boot module's std_dl handshake on /dev/umts_boot0.
+ libc = "0.2"
++md5 = "=0.8.1"
+ 
+ [build-dependencies]
+ # protox is a pure-Rust protobuf compiler, so no system protoc is needed and the
+--- a/crates/exynos-modem/src/store.rs
++++ b/crates/exynos-modem/src/store.rs
+@@ -1,33 +1,15 @@
+-//! Where the modem's files live.
++//! Native modem state is kept under its own Linux state root. Vendor EFS and
++//! modem_userdata remain read-only; this code never writes those partitions.
+ //!
+-//! The CP both reads and writes files through us, and until now the two halves
+-//! disagreed: reads came from the vendor partitions and writes went to tmpfs, so
+-//! every boot the modem re-read the factory copy and its own updates evaporated.
+-//! Both `nv_*.bin` (RFS) and `dds.bin` (the GDDS NV backup, which the CP
+-//! explicitly restores from) worked that way.
+-//!
+-//! So: **our copy wins, the vendor partition is the fallback.** A file the CP
+-//! has written is served back to it; one it has never written comes from the
+-//! read-only factory image, which is also what happens on a fresh install. The
+-//! vendor partitions are mounted `ro` (both `/mnt/vendor/efs` and
+-//! `/mnt/vendor/modem_userdata` are f2fs, read-only), so our copy has to live
+-//! elsewhere regardless.
+-//!
+-//! Writing to our own root rather than to the vendor partitions is also a
+-//! deliberate safety margin, not only a consequence of the `ro` mounts. These
+-//! files are the modem's calibration and NV state; a bug here that corrupted
+-//! `/mnt/vendor/efs` would take the factory copy with it and leave nothing to
+-//! fall back to. **Once this code has proven itself, mounting those partitions
+-//! `rw` and writing in place is a reasonable next step** -- it would give
+-//! parity with downstream and let the two stacks share one state. Until then
+-//! the fallback is genuinely a fallback: the factory image stays pristine and
+-//! deleting our root restores the original behaviour exactly.
+-//!
+-//! Writes land in a `.part` file and are renamed into place only when the CP
+-//! says the transfer is done. A rename is atomic, so an interrupted write --
+-//! a crash, a reboot, a truncated transfer -- can never become the file we serve
+-//! back. That is the discipline downstream's own efs directory shows, where
+-//! `nv_normal.bin` sits beside a `.tmp` and an `.md5`.
++//! Completed NV data and the factory-compatible salted-MD5 sidecar are
++//! published as one generation, selected by an atomic pointer. An invalid
++//! published generation blocks fallback rather than silently reverting state.
++//! Other file kinds retain durable single-file publication. Legacy seed paths
++//! still need separate integrity/migration qualification. Old and incomplete
++//! generations are retained pending a qualified recovery/cleanup policy.
++
++#[path = "nv_store.rs"]
++mod nv;
+ 
+ use std::fs::{self, File, OpenOptions};
+ use std::io;
+@@ -152,6 +134,16 @@
+     /// The file to serve the CP: our copy if we have one, else the vendor
+     /// original. None when neither exists.
+     pub fn read_path(&self, kind: Kind, name: &str) -> Option<PathBuf> {
++        if kind == Kind::Efs {
++            match nv::read(&self.root.join(kind.subdir()), name) {
++                Ok(Some(path)) => return Some(path),
++                Ok(None) => {}
++                Err(error) => {
++                    eprintln!("store: native NV generation unavailable: {}", error);
++                    return None;
++                }
++            }
++        }
+         let own = self.own(kind, name);
+         if own.is_file() {
+             return Some(own);
+@@ -164,19 +156,44 @@
+     /// worth saying once in the log, since it means the CP's own updates have
+     /// not been seen yet.
+     pub fn is_vendor(&self, kind: Kind, name: &str) -> bool {
++        if kind == Kind::Efs
++            && fs::symlink_metadata(
++                self.root
++                    .join(kind.subdir())
++                    .join(format!("{name}.current")),
++            )
++            .is_ok()
++        {
++            return false;
++        }
+         !self.own(kind, name).is_file()
+     }
+ 
+     /// The in-progress file for a write. Renamed over the real one by
+     /// [`Store::commit`]; left behind (and ignored by readers) otherwise.
+     pub fn part(&self, kind: Kind, name: &str) -> io::Result<PathBuf> {
+-        Ok(self.dir(kind)?.join(format!("{}.part", name)))
++        let directory = self.dir(kind)?;
++        if kind == Kind::Efs {
++            if name == "nv_protected.bin" {
++                return Err(io::Error::new(
++                    io::ErrorKind::PermissionDenied,
++                    "protected NV staging is unsupported",
++                ));
++            }
++            // Corrupt published state requires explicit recovery; never accept
++            // a fresh transfer over it as though the unit had no saved state.
++            let _ = nv::read(&directory, name)?;
++        }
++        Ok(directory.join(format!("{}.part", name)))
+     }
+ 
+     /// Publish a completed write. Atomic: readers see the old file or the new
+     /// one, never a half-written mixture.
+     pub fn commit(&self, kind: Kind, name: &str) -> io::Result<PathBuf> {
+         let directory = self.dir(kind)?;
++        if kind == Kind::Efs {
++            return nv::publish(&directory, name, &self.part(kind, name)?);
++        }
+         let dest = directory.join(name);
+         let part = self.part(kind, name)?;
+         // Atomic rename alone does not make either the file contents or its
+@@ -317,4 +334,17 @@
+         assert!(!root.join("efs").exists());
+         fs::remove_dir_all(root).unwrap();
+     }
+-}
++    #[test]
++    fn commit_provides_data_and_matching_checksum_in_the_same_generation() {
++        let root = tmp("coherent-sidecar");
++        let store = Store::new(root.clone());
++        let stage = store.part(Kind::Efs, "nv_normal.bin").unwrap();
++        fs::write(stage, b"checksum fixture").unwrap();
++        let committed = store.commit(Kind::Efs, "nv_normal.bin").unwrap();
++        let sidecar = fs::read(committed.parent().unwrap().join("data.md5"))
++            .expect("the published data must have its companion sidecar");
++        assert_eq!(sidecar, b"5b8df9721b64b65a54ab0fd3f7151573");
++        assert_eq!(fs::read(committed).unwrap(), b"checksum fixture");
++        fs::remove_dir_all(root).unwrap();
++    }
++}
+--- a/crates/exynos-modem/src/rfs.rs
++++ b/crates/exynos-modem/src/rfs.rs
+@@ -1036,7 +1036,15 @@
+             assert_eq!(le32(&request[start + 12..]), offset);
+             assert_eq!(std::fs::read(&path).unwrap().len(), 12);
+             rfs.handle(&write_chunk(token, data.len() as u32, data));
+-            assert_eq!(std::fs::read(&path).unwrap(), expected);
++            assert_eq!(
++                std::fs::read(rfs.store.read_path(Kind::Efs, "nv_normal.bin").unwrap()).unwrap(),
++                expected
++            );
++            assert_eq!(
++                std::fs::read(&path).unwrap(),
++                b"abcdefghijkl",
++                "legacy seed remains unchanged"
++            );
+             let e = rfs.files.get_mut(&1).unwrap();
+             assert_eq!(e.size, 12);
+             let mut fresh = Vec::new();
+@@ -1414,7 +1422,15 @@
+         body.extend(b"new!");
+         rfs.handle(&frame(RFS_WRITE, 9, &body));
+         assert!(rfs.tx_error.is_some());
+-        assert_eq!(std::fs::read(nv).unwrap(), b"new!inal");
++        assert_eq!(
++            std::fs::read(rfs.store.read_path(Kind::Efs, "nv_normal.bin").unwrap()).unwrap(),
++            b"new!inal"
++        );
++        assert_eq!(
++            std::fs::read(nv).unwrap(),
++            b"original",
++            "legacy seed is preserved"
++        );
+         let source = rfs.files.get_mut(&1).unwrap().fd.as_mut().unwrap();
+         source.seek(SeekFrom::Start(0)).unwrap();
+         let mut committed = Vec::new();
+--- /dev/null
++++ b/crates/exynos-modem/src/nv_store.rs
+@@ -0,0 +1,527 @@
++//! Atomic native NV/checksum publication. Vendor partitions are never written.
++//! Old and orphan generations are retained; recovery/garbage collection and
++//! the protected-NV protocol still need qualification before deployment.
++
++use std::fs::{self, File, OpenOptions};
++use std::io::{self, Read, Seek, SeekFrom, Write};
++use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt};
++use std::path::{Path, PathBuf};
++use std::sync::atomic::{AtomicU64, Ordering};
++use std::time::{SystemTime, UNIX_EPOCH};
++
++const SALT: &[u8] = b"Samsung_SIT_RIL";
++static NEXT: AtomicU64 = AtomicU64::new(1);
++
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub(super) enum Point {
++    DataCopied,
++    DataSynced,
++    SidecarSynced,
++    GenerationSynced,
++    PointerSynced,
++    PointerRenamed,
++    DirectorySynced,
++}
++
++fn known_name(name: &str) -> bool {
++    matches!(name, "nv_normal.bin" | "nv_protected.bin" | "nv_user.bin")
++}
++
++fn invalid(message: &'static str) -> io::Error {
++    io::Error::new(io::ErrorKind::InvalidData, message)
++}
++
++fn regular(path: &Path) -> io::Result<File> {
++    let file = OpenOptions::new()
++        .read(true)
++        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
++        .open(path)?;
++    if !file.metadata()?.is_file() {
++        return Err(invalid("NV state is not a regular file"));
++    }
++    Ok(file)
++}
++
++fn private_regular(path: &Path) -> io::Result<File> {
++    let file = regular(path)?;
++    let metadata = file.metadata()?;
++    if metadata.uid() != unsafe { libc::geteuid() } || metadata.mode() & 0o077 != 0 {
++        return Err(io::Error::new(
++            io::ErrorKind::PermissionDenied,
++            "NV generation file is not private and owned",
++        ));
++    }
++    Ok(file)
++}
++
++fn checksum(file: &mut File) -> io::Result<String> {
++    file.seek(SeekFrom::Start(0))?;
++    let mut context = md5::Context::new();
++    let mut buffer = [0; 16384];
++    loop {
++        let n = file.read(&mut buffer)?;
++        if n == 0 {
++            break;
++        }
++        context.consume(&buffer[..n]);
++    }
++    context.consume(SALT);
++    Ok(format!("{:x}", context.finalize()))
++}
++
++/// None means never published. Every other failure must block legacy fallback.
++pub(super) fn read(directory: &Path, name: &str) -> io::Result<Option<PathBuf>> {
++    if !known_name(name) {
++        return Err(invalid("unknown NV filename"));
++    }
++    let pointer = directory.join(format!("{name}.current"));
++    match fs::symlink_metadata(&pointer) {
++        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
++        Err(error) => return Err(error),
++        Ok(_) => {}
++    }
++    super::validate_state_dir(
++        directory
++            .parent()
++            .ok_or_else(|| invalid("missing state root"))?,
++    )?;
++    super::validate_state_dir(directory)?;
++    let pointer_file = private_regular(&pointer)?;
++    if pointer_file.metadata()?.len() > 192 {
++        return Err(invalid("oversized NV pointer"));
++    }
++    let mut target = String::new();
++    pointer_file.take(193).read_to_string(&mut target)?;
++    let target = target
++        .strip_suffix('\n')
++        .ok_or_else(|| invalid("invalid NV pointer"))?;
++    let suffix = target
++        .strip_prefix(&format!("{name}.gen-"))
++        .ok_or_else(|| invalid("wrong NV generation name"))?;
++    if suffix.is_empty() || !suffix.bytes().all(|b| b.is_ascii_hexdigit() || b == b'-') {
++        return Err(invalid("invalid NV generation component"));
++    }
++    let generation = directory.join(target);
++    super::validate_state_dir(&generation)?;
++    let data_path = generation.join("data.bin");
++    let mut data = private_regular(&data_path)?;
++    let mut sidecar = private_regular(&generation.join("data.md5"))?;
++    if sidecar.metadata()?.len() != 32 {
++        return Err(invalid("invalid NV checksum size"));
++    }
++    let mut expected = [0; 32];
++    sidecar.read_exact(&mut expected)?;
++    if !expected.iter().all(u8::is_ascii_hexdigit)
++        || !expected.eq_ignore_ascii_case(checksum(&mut data)?.as_bytes())
++    {
++        return Err(invalid("NV generation checksum mismatch"));
++    }
++    Ok(Some(data_path))
++}
++
++pub(super) fn publish(directory: &Path, name: &str, stage: &Path) -> io::Result<PathBuf> {
++    publish_with(directory, name, stage, |_| Ok(()))
++}
++
++fn publish_with(
++    directory: &Path,
++    name: &str,
++    stage: &Path,
++    mut checkpoint: impl FnMut(Point) -> io::Result<()>,
++) -> io::Result<PathBuf> {
++    // No protected write is supported without the complete factory protocol.
++    if name == "nv_protected.bin" {
++        return Err(io::Error::new(
++            io::ErrorKind::PermissionDenied,
++            "protected NV publication is unsupported",
++        ));
++    }
++    if !matches!(name, "nv_normal.bin" | "nv_user.bin") {
++        return Err(invalid("unknown writable NV filename"));
++    }
++    super::validate_state_dir(directory)?;
++    let _ = read(directory, name)?;
++    // Preserve existing non-regular legacy entries rather than replacing them.
++    match fs::symlink_metadata(directory.join(name)) {
++        Ok(m) if !m.is_file() => return Err(invalid("legacy NV path is not regular")),
++        Err(e) if e.kind() != io::ErrorKind::NotFound => return Err(e),
++        _ => {}
++    }
++    let mut source = regular(stage)?;
++    let source_size = source.metadata()?.len();
++    if source_size == 0 {
++        return Err(invalid("empty NV publication is invalid"));
++    }
++    let mut selected = None;
++    for _ in 0..128 {
++        let now = SystemTime::now()
++            .duration_since(UNIX_EPOCH)
++            .map_err(io::Error::other)?
++            .as_nanos();
++        let component = format!(
++            "{name}.gen-{:x}-{:x}-{:x}",
++            std::process::id(),
++            now,
++            NEXT.fetch_add(1, Ordering::Relaxed)
++        );
++        let path = directory.join(&component);
++        match fs::DirBuilder::new().mode(0o700).create(&path) {
++            Ok(()) => {
++                selected = Some((component, path));
++                break;
++            }
++            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
++            Err(e) => return Err(e),
++        }
++    }
++    let (component, generation) = selected.ok_or_else(|| {
++        io::Error::new(
++            io::ErrorKind::AlreadyExists,
++            "cannot allocate unique NV generation",
++        )
++    })?;
++    File::open(directory)?.sync_all()?;
++    // Copy into an independent inode: an old staging FD cannot alter a
++    // published generation or its checksum after this operation completes.
++    let data_path = generation.join("data.bin");
++    let mut data = OpenOptions::new()
++        .read(true)
++        .write(true)
++        .create_new(true)
++        .mode(0o600)
++        .open(&data_path)?;
++    let copied = io::copy(&mut (&mut source).take(source_size), &mut data)?;
++    if copied != source_size {
++        return Err(invalid("NV stage truncated during publication"));
++    }
++    checkpoint(Point::DataCopied)?;
++    data.sync_all()?;
++    checkpoint(Point::DataSynced)?;
++    let digest = checksum(&mut data)?;
++    let mut sidecar = OpenOptions::new()
++        .write(true)
++        .create_new(true)
++        .mode(0o600)
++        .open(generation.join("data.md5"))?;
++    sidecar.write_all(digest.as_bytes())?;
++    sidecar.sync_all()?;
++    checkpoint(Point::SidecarSynced)?;
++    File::open(&generation)?.sync_all()?;
++    checkpoint(Point::GenerationSynced)?;
++    let temporary = directory.join(format!(".{component}.pointer.part"));
++    let mut pointer = OpenOptions::new()
++        .write(true)
++        .create_new(true)
++        .mode(0o600)
++        .open(&temporary)?;
++    writeln!(pointer, "{component}")?;
++    pointer.sync_all()?;
++    checkpoint(Point::PointerSynced)?;
++    fs::rename(&temporary, directory.join(format!("{name}.current")))?;
++    checkpoint(Point::PointerRenamed)?;
++    File::open(directory)?.sync_all()?;
++    checkpoint(Point::DirectorySynced)?;
++    // Publication has completed. An unlink failure is an error, not a claimed
++    // rollback: the new generation remains the current coherent read view.
++    fs::remove_file(stage)?;
++    File::open(directory)?.sync_all()?;
++    Ok(data_path)
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use crate::store::{Kind, Store};
++    use std::os::unix::fs::{symlink, PermissionsExt};
++
++    fn fixture(tag: &str) -> (Store, PathBuf, PathBuf) {
++        let root = std::env::temp_dir().join(format!("nv-generation-{}-{tag}", std::process::id()));
++        let _ = fs::remove_dir_all(&root);
++        let store = Store::new(root.clone());
++        let part = store.part(Kind::Efs, "nv_normal.bin").unwrap();
++        (store, root, part)
++    }
++
++    #[test]
++    fn publication_selects_a_private_data_checksum_pair() {
++        let (store, root, part) = fixture("pair");
++        fs::write(&part, b"complete synthetic NV").unwrap();
++        let data = store.commit(Kind::Efs, "nv_normal.bin").unwrap();
++        assert_eq!(
++            store.read_path(Kind::Efs, "nv_normal.bin"),
++            Some(data.clone())
++        );
++        assert_eq!(fs::read(&data).unwrap(), b"complete synthetic NV");
++        for file in [
++            &data,
++            &data.parent().unwrap().join("data.md5"),
++            &root.join("efs/nv_normal.bin.current"),
++        ] {
++            assert_eq!(fs::metadata(file).unwrap().mode() & 0o777, 0o600);
++        }
++        assert!(!part.exists());
++        assert!(!store.is_vendor(Kind::Efs, "nv_normal.bin"));
++        fs::remove_dir_all(root).unwrap();
++    }
++
++    #[test]
++    fn salted_md5_matches_independent_known_answer() {
++        let (_store, root, part) = fixture("known-answer");
++        fs::write(&part, b"abc").unwrap();
++        // Independent reference computed with Python hashlib over the literal
++        // bytes, not by calling this module's checksum implementation.
++        assert_eq!(
++            checksum(&mut File::open(part).unwrap()).unwrap(),
++            "691db4444d1e24a3092dd3fe49942e45"
++        );
++        fs::remove_dir_all(root).unwrap();
++    }
++
++    #[test]
++    fn every_publication_checkpoint_keeps_a_complete_old_or_new_view() {
++        for (i, point) in [
++            Point::DataCopied,
++            Point::DataSynced,
++            Point::SidecarSynced,
++            Point::GenerationSynced,
++            Point::PointerSynced,
++            Point::PointerRenamed,
++            Point::DirectorySynced,
++        ]
++        .into_iter()
++        .enumerate()
++        {
++            let (store, root, part) = fixture(&format!("fault-{i}"));
++            fs::write(&part, b"old state").unwrap();
++            store.commit(Kind::Efs, "nv_normal.bin").unwrap();
++            fs::write(&part, b"new state").unwrap();
++            assert!(
++                publish_with(&root.join("efs"), "nv_normal.bin", &part, |p| {
++                    if p == point {
++                        Err(io::Error::other("injected I/O boundary failure"))
++                    } else {
++                        Ok(())
++                    }
++                })
++                .is_err()
++            );
++            let view = store
++                .read_path(Kind::Efs, "nv_normal.bin")
++                .expect("old or new complete generation");
++            let expected = if matches!(point, Point::PointerRenamed | Point::DirectorySynced) {
++                b"new state"
++            } else {
++                b"old state"
++            };
++            assert_eq!(fs::read(view).unwrap(), expected);
++            fs::remove_dir_all(root).unwrap();
++        }
++    }
++
++    #[test]
++    fn broken_published_sidecar_never_falls_back_to_legacy_nv() {
++        let (store, root, part) = fixture("bad-sidecar");
++        fs::write(root.join("efs/nv_normal.bin"), b"stale legacy").unwrap();
++        fs::write(&part, b"current").unwrap();
++        let data = store.commit(Kind::Efs, "nv_normal.bin").unwrap();
++        fs::write(
++            data.parent().unwrap().join("data.md5"),
++            b"00000000000000000000000000000000",
++        )
++        .unwrap();
++        assert!(store.read_path(Kind::Efs, "nv_normal.bin").is_none());
++        assert!(
++            store.part(Kind::Efs, "nv_normal.bin").is_err(),
++            "corrupt state cannot bootstrap a new transfer"
++        );
++        assert!(store.commit(Kind::Efs, "nv_normal.bin").is_err());
++        fs::remove_dir_all(root).unwrap();
++    }
++
++    #[test]
++    fn altered_published_data_is_rejected() {
++        let (store, root, part) = fixture("altered-data");
++        fs::write(&part, b"current").unwrap();
++        let data = store.commit(Kind::Efs, "nv_normal.bin").unwrap();
++        fs::write(data, b"changed").unwrap();
++        assert!(store.read_path(Kind::Efs, "nv_normal.bin").is_none());
++        fs::remove_dir_all(root).unwrap();
++    }
++
++    #[test]
++    fn pointer_path_traversal_and_symlinks_are_rejected() {
++        let (store, root, _part) = fixture("pointer");
++        let pointer = root.join("efs/nv_normal.bin.current");
++        fs::write(&pointer, b"../../elsewhere\n").unwrap();
++        fs::set_permissions(&pointer, fs::Permissions::from_mode(0o600)).unwrap();
++        assert!(store.read_path(Kind::Efs, "nv_normal.bin").is_none());
++        fs::remove_file(&pointer).unwrap();
++        let outside = root.join("outside");
++        fs::write(&outside, b"nv_normal.bin.gen-abc\n").unwrap();
++        symlink(&outside, &pointer).unwrap();
++        assert!(store.read_path(Kind::Efs, "nv_normal.bin").is_none());
++        fs::remove_dir_all(root).unwrap();
++    }
++
++    #[test]
++    fn orphan_generation_is_not_a_published_read_view() {
++        let (store, root, part) = fixture("orphan");
++        fs::write(&part, b"incomplete").unwrap();
++        assert!(
++            publish_with(&root.join("efs"), "nv_normal.bin", &part, |p| {
++                if p == Point::DataCopied {
++                    Err(io::Error::other("stopped"))
++                } else {
++                    Ok(())
++                }
++            })
++            .is_err()
++        );
++        assert!(store.read_path(Kind::Efs, "nv_normal.bin").is_none());
++        fs::remove_dir_all(root).unwrap();
++    }
++
++    #[test]
++    fn a_lingering_stage_fd_cannot_modify_the_published_inode() {
++        let (store, root, part) = fixture("old-fd");
++        fs::write(&part, b"published").unwrap();
++        let mut old = OpenOptions::new().write(true).open(&part).unwrap();
++        let data = store.commit(Kind::Efs, "nv_normal.bin").unwrap();
++        old.write_all(b"CORRUPTED").unwrap();
++        assert_eq!(fs::read(&data).unwrap(), b"published");
++        assert_eq!(store.read_path(Kind::Efs, "nv_normal.bin"), Some(data));
++        fs::remove_dir_all(root).unwrap();
++    }
++
++    #[test]
++    fn protected_and_unknown_nv_names_cannot_be_published() {
++        let (store, root, part) = fixture("protected");
++        fs::write(&part, b"fixture").unwrap();
++        for name in ["nv_protected.bin", "../escape", "unexpected.bin"] {
++            assert!(publish(&root.join("efs"), name, &part).is_err());
++        }
++        assert!(part.exists());
++        assert!(store.read_path(Kind::Efs, "nv_normal.bin").is_none());
++        fs::remove_dir_all(root).unwrap();
++    }
++    #[test]
++    fn symlinked_generation_members_and_directories_are_rejected() {
++        for (i, member) in ["data.bin", "data.md5", "directory"]
++            .into_iter()
++            .enumerate()
++        {
++            let (store, root, part) = fixture(&format!("member-link-{i}"));
++            fs::write(&part, b"current").unwrap();
++            let data = store.commit(Kind::Efs, "nv_normal.bin").unwrap();
++            let generation = data.parent().unwrap();
++            let outside = root.join("outside");
++            if member == "directory" {
++                fs::rename(generation, &outside).unwrap();
++                symlink(&outside, generation).unwrap();
++            } else {
++                let target = generation.join(member);
++                fs::rename(&target, &outside).unwrap();
++                symlink(&outside, &target).unwrap();
++            }
++            assert!(store.read_path(Kind::Efs, "nv_normal.bin").is_none());
++            fs::remove_dir_all(root).unwrap();
++        }
++    }
++
++    #[test]
++    fn an_empty_stage_cannot_replace_an_existing_generation() {
++        let (store, root, part) = fixture("empty");
++        fs::write(&part, b"current").unwrap();
++        let current = store.commit(Kind::Efs, "nv_normal.bin").unwrap();
++        fs::write(&part, b"").unwrap();
++        assert!(store.commit(Kind::Efs, "nv_normal.bin").is_err());
++        assert_eq!(store.read_path(Kind::Efs, "nv_normal.bin"), Some(current));
++        fs::remove_dir_all(root).unwrap();
++    }
++
++    #[test]
++    fn publication_crash_child() {
++        let Ok(root) = std::env::var("LUMA_NV_TEST_CRASH_ROOT") else {
++            return;
++        };
++        let root = PathBuf::from(root);
++        assert!(root.starts_with(std::env::temp_dir()));
++        assert!(root
++            .file_name()
++            .unwrap()
++            .to_string_lossy()
++            .starts_with("nv-generation-"));
++        let stage = root.join("efs/nv_normal.bin.part");
++        assert_eq!(fs::read(&stage).unwrap(), b"new state");
++        let wanted = std::env::var("LUMA_NV_TEST_CRASH_POINT").unwrap();
++        publish_with(&root.join("efs"), "nv_normal.bin", &stage, |point| {
++            if format!("{point:?}") == wanted {
++                unsafe { libc::_exit(77) };
++            }
++            Ok(())
++        })
++        .unwrap();
++        panic!("requested crash checkpoint was not reached");
++    }
++
++    #[test]
++    fn process_exit_at_each_checkpoint_leaves_only_a_complete_read_view() {
++        for (i, point) in [
++            Point::DataCopied,
++            Point::DataSynced,
++            Point::SidecarSynced,
++            Point::GenerationSynced,
++            Point::PointerSynced,
++            Point::PointerRenamed,
++            Point::DirectorySynced,
++        ]
++        .into_iter()
++        .enumerate()
++        {
++            let (store, root, stage) = fixture(&format!("process-crash-{i}"));
++            fs::write(&stage, b"old state").unwrap();
++            store.commit(Kind::Efs, "nv_normal.bin").unwrap();
++            fs::write(&stage, b"new state").unwrap();
++            let executable = std::env::current_exe().unwrap();
++            let mut command = if cfg!(target_arch = "aarch64") {
++                if let Some(runner) =
++                    std::env::var_os("CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_RUNNER")
++                {
++                    let mut c = std::process::Command::new(runner);
++                    c.arg(&executable);
++                    c
++                } else {
++                    std::process::Command::new(&executable)
++                }
++            } else {
++                std::process::Command::new(&executable)
++            };
++            let result = command
++                .args([
++                    "--exact",
++                    "store::nv::tests::publication_crash_child",
++                    "--nocapture",
++                ])
++                .env("LUMA_NV_TEST_CRASH_ROOT", &root)
++                .env("LUMA_NV_TEST_CRASH_POINT", format!("{point:?}"))
++                .output()
++                .unwrap();
++            assert_eq!(
++                result.status.code(),
++                Some(77),
++                "{}",
++                String::from_utf8_lossy(&result.stderr)
++            );
++            let view = Store::new(root.clone())
++                .read_path(Kind::Efs, "nv_normal.bin")
++                .expect("fresh process sees coherent state");
++            let expected = if matches!(point, Point::PointerRenamed | Point::DirectorySynced) {
++                b"new state"
++            } else {
++                b"old state"
++            };
++            assert_eq!(fs::read(view).unwrap(), expected);
++            fs::remove_dir_all(root).unwrap();
++        }
++    }
++}

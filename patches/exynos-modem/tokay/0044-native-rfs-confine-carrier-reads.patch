@@ -1,0 +1,190 @@
+--- a/crates/exynos-modem/src/rfs.rs
++++ b/crates/exynos-modem/src/rfs.rs
+@@ -19,10 +19,13 @@
+ //! Ported from modem/rfs-server.c (freestanding C).
+ 
+ use std::collections::HashMap;
++use std::ffi::CString;
+ use std::fs::{File, OpenOptions};
+ use std::io::{Read, Seek, SeekFrom, Write};
+-use std::os::unix::io::AsRawFd;
+-use std::path::{Path, PathBuf};
++use std::os::unix::ffi::OsStrExt;
++use std::os::unix::fs::OpenOptionsExt;
++use std::os::unix::io::{AsRawFd, FromRawFd};
++use std::path::{Component, Path, PathBuf};
+ use std::time::Duration;
+ 
+ use crate::store::{Kind, Store};
+@@ -64,20 +67,55 @@
+     }
+ }
+ 
+-/// Resolve + open an OPEN(path) request read-only, honouring the whitelist.
+-fn open_path(path: &str) -> Option<File> {
+-    if !path.contains("carrierconfig") && !path.contains("confpack") {
+-        eprintln!("rfs: reject (not whitelisted): {}", path);
+-        return None;
+-    }
+-    if let Ok(f) = File::open(path) {
+-        return Some(f);
+-    }
+-    // Fallback: carrier config staged at /carrierconfig instead of the vendor
+-    // path the modem names.
+-    const CCPATH: &str = "/vendor/firmware/carrierconfig";
+-    if let Some(rest) = path.strip_prefix(CCPATH) {
+-        return File::open(format!("/carrierconfig{}", rest)).ok();
++/// Read only regular files beneath the explicitly provisioned carrier roots.
++/// CP paths name the factory namespace; roots are selected by us, never the CP.
++fn open_path(path: &str, roots: &[PathBuf]) -> Option<File> {
++    let relative = path.strip_prefix("/vendor/firmware/carrierconfig/")?;
++    let names: Vec<CString> = Path::new(relative)
++        .components()
++        .map(|component| match component {
++            Component::Normal(name) => CString::new(name.as_bytes()).ok(),
++            _ => None,
++        })
++        .collect::<Option<_>>()?;
++    let (last, parents) = names.split_last()?;
++    for root in roots {
++        let attempt = || -> Option<File> {
++            let mut directory = OpenOptions::new()
++                .read(true)
++                .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
++                .open(root)
++                .ok()?;
++            for name in parents {
++                let fd = unsafe {
++                    libc::openat(
++                        directory.as_raw_fd(),
++                        name.as_ptr(),
++                        libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
++                    )
++                };
++                if fd < 0 {
++                    return None;
++                }
++                directory = unsafe { File::from_raw_fd(fd) };
++            }
++            // NONBLOCK prevents a misplaced FIFO from stalling the RFS worker.
++            let fd = unsafe {
++                libc::openat(
++                    directory.as_raw_fd(),
++                    last.as_ptr(),
++                    libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK,
++                )
++            };
++            if fd < 0 {
++                return None;
++            }
++            let file = unsafe { File::from_raw_fd(fd) };
++            file.metadata().ok()?.is_file().then_some(file)
++        };
++        if let Some(file) = attempt() {
++            return Some(file);
++        }
+     }
+     None
+ }
+@@ -103,6 +141,7 @@
+     // Track only open handles so a large/sparse ID does not allocate a vector.
+     files: HashMap<u32, Fent>,
+     txbuf: Vec<u8>,
++    carrier_roots: Vec<PathBuf>,
+ }
+ 
+ impl Rfs {
+@@ -113,6 +152,10 @@
+             verbose,
+             files: HashMap::new(),
+             txbuf: vec![0u8; 0x14 + CHUNK + 8],
++            carrier_roots: vec![
++                PathBuf::from("/vendor/firmware/carrierconfig"),
++                PathBuf::from("/carrierconfig"),
++            ],
+         }
+     }
+ 
+@@ -234,8 +277,9 @@
+                 if 0x10 + plen > n {
+                     plen = n - 0x10;
+                 }
+-                let path = String::from_utf8_lossy(&f[0x10..0x10 + plen]).into_owned();
+-                let src = open_path(&path);
++                let src = std::str::from_utf8(&f[0x10..0x10 + plen])
++                    .ok()
++                    .and_then(|path| open_path(path, &self.carrier_roots));
+                 let size = file_size(&src);
+                 let served = src.is_some();
+                 self.files.insert(
+@@ -529,9 +573,10 @@
+         let dev: OwnedFd = local.into();
+         let mut rfs = Rfs::new(dev.into(), Store::new(root.clone()), false);
+ 
++        rfs.carrier_roots = vec![root.join("carrierconfig")];
+         // Include the old boundary, the observed failure, and a sparse u32 ID.
+         for fid in [31u32, 32, 40, u32::MAX] {
+-            let path_bytes = path.to_str().unwrap().as_bytes();
++            let path_bytes = b"/vendor/firmware/carrierconfig/fixture";
+             let mut body = fid.to_le_bytes().to_vec();
+             body.extend((path_bytes.len() as u32).to_le_bytes());
+             body.extend(path_bytes);
+@@ -738,4 +783,57 @@
+             std::fs::remove_file(device).unwrap();
+         }
+     }
+-}
++    #[test]
++    fn carrier_paths_are_confined_and_do_not_follow_symlinks() {
++        use std::os::unix::fs::symlink;
++        let root = std::env::temp_dir().join(format!("rfs-confined-{}", std::process::id()));
++        let _ = std::fs::remove_dir_all(&root);
++        let allowed = root.join("allowed");
++        std::fs::create_dir_all(allowed.join("nested")).unwrap();
++        std::fs::write(allowed.join("nested/config"), b"permitted").unwrap();
++        std::fs::write(root.join("secret"), b"outside").unwrap();
++        symlink(root.join("secret"), allowed.join("link")).unwrap();
++        symlink(&root, allowed.join("escape")).unwrap();
++        let fifo = CString::new(allowed.join("fifo").as_os_str().as_bytes()).unwrap();
++        assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o600) }, 0);
++        let roots = vec![allowed.clone()];
++        let mut valid = open_path("/vendor/firmware/carrierconfig/nested/config", &roots).unwrap();
++        let mut bytes = Vec::new();
++        valid.read_to_end(&mut bytes).unwrap();
++        assert_eq!(bytes, b"permitted");
++        for path in [
++            "/tmp/carrierconfig/secret",
++            "/etc/confpack",
++            "/etc/shadow",
++            "/vendor/firmware/carrierconfig-evil/secret",
++            "/vendor/firmware/carrierconfig/../secret",
++            "/vendor/firmware/carrierconfig/nested/../../secret",
++            "/vendor/firmware/carrierconfig/link",
++            "/vendor/firmware/carrierconfig/escape/secret",
++            "/vendor/firmware/carrierconfig/nested",
++            "/vendor/firmware/carrierconfig/fifo",
++            "/vendor/firmware/carrierconfig/",
++            "/vendor/firmware/carrierconfig/x\0y",
++        ] {
++            assert!(open_path(path, &roots).is_none(), "accepted {path:?}");
++        }
++        let alias = root.join("root-link");
++        symlink(&allowed, &alias).unwrap();
++        assert!(open_path("/vendor/firmware/carrierconfig/nested/config", &[alias]).is_none());
++        std::fs::remove_dir_all(&root).unwrap();
++    }
++
++    #[test]
++    fn carrier_fallback_uses_only_configured_roots() {
++        let root = std::env::temp_dir().join(format!("rfs-fallback-{}", std::process::id()));
++        let _ = std::fs::remove_dir_all(&root);
++        std::fs::create_dir_all(root.join("fallback")).unwrap();
++        std::fs::write(root.join("fallback/config"), b"fallback").unwrap();
++        let roots = vec![root.join("missing"), root.join("fallback")];
++        let mut file = open_path("/vendor/firmware/carrierconfig/config", &roots).unwrap();
++        let mut text = String::new();
++        file.read_to_string(&mut text).unwrap();
++        assert_eq!(text, "fallback");
++        std::fs::remove_dir_all(&root).unwrap();
++    }
++}

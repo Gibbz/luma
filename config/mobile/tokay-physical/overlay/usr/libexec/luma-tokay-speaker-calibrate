@@ -1,0 +1,167 @@
+#!/usr/bin/python3
+# SPDX-License-Identifier: Apache-2.0
+"""Provision native protection from this unit's read-only factory calibration."""
+from pathlib import Path
+import ctypes as C
+import json
+import os
+import stat
+import struct
+import subprocess
+import time
+
+
+def run(*args):
+    return subprocess.run(args, check=True, capture_output=True)
+
+
+def mute():
+    for prefix in ('', 'R '):
+        run('amixer', '-q', '-c', '0', 'cset',
+            'name=' + prefix + 'Digital PCM Volume', '0')
+
+
+def read_factory_calibration():
+    candidates = []
+    for node in Path('/sys/class/block').glob('sd*'):
+        if 'PARTNAME=persist' in (node / 'uevent').read_text().splitlines():
+            candidates.append(node)
+    assert len(candidates) == 1, 'Require unique persist partition'
+    node = candidates[0]
+    assert (node / 'ro').read_text().strip() == '1'
+    assert int((node / 'size').read_text()) * 512 == 134217728
+    mount = Path('/run/luma/tokay-calibration-source')
+    mount.mkdir(mode=0o700)
+    try:
+        run('mount', '-t', 'f2fs', '-o', 'ro,norecovery,nodev,nosuid,noexec',
+            '/dev/' + node.name, str(mount))
+        try:
+            entries = [line.split() for line in Path('/proc/self/mountinfo').read_text().splitlines()]
+            entries = [entry for entry in entries if entry[4] == str(mount)]
+            assert len(entries) == 1 and 'ro' in entries[0][5].split(',')
+            assert not (mount / 'audio').is_symlink()
+            fd = os.open(mount / 'audio/speaker.cal', os.O_RDONLY | os.O_NOFOLLOW)
+            try:
+                st = os.fstat(fd)
+                assert stat.S_ISREG(st.st_mode) and st.st_size == 48
+                data = os.read(fd, 49)
+                assert len(data) == 48
+            finally:
+                os.close(fd)
+        finally:
+            run('umount', str(mount))
+    finally:
+        mount.rmdir()
+    records = [struct.unpack_from('<6I', data, index * 24) for index in range(2)]
+    for resistance, status, checksum, ambient, analog, digital in records:
+        assert 0 < resistance < 65533 and status == 1 and checksum == resistance + 1
+        assert ambient <= 85 and analog <= 31 and digital <= 913
+    return records
+
+
+class Controls:
+    def __init__(self):
+        self.lib = C.CDLL('libasound.so.2')
+        ptr, integer, unsigned = C.c_void_p, C.c_int, C.c_uint
+        signatures = [
+            ('snd_ctl_open', [C.POINTER(ptr), C.c_char_p, integer], integer),
+            ('snd_ctl_close', [ptr], integer),
+            ('snd_ctl_elem_id_malloc', [C.POINTER(ptr)], integer),
+            ('snd_ctl_elem_id_free', [ptr], None),
+            ('snd_ctl_elem_id_set_interface', [ptr, integer], None),
+            ('snd_ctl_elem_id_set_name', [ptr, C.c_char_p], None),
+            ('snd_ctl_elem_value_malloc', [C.POINTER(ptr)], integer),
+            ('snd_ctl_elem_value_free', [ptr], None),
+            ('snd_ctl_elem_value_set_id', [ptr, ptr], None),
+            ('snd_ctl_elem_read', [ptr, ptr], integer),
+            ('snd_ctl_elem_write', [ptr, ptr], integer),
+            ('snd_ctl_elem_value_get_byte', [ptr, unsigned], C.c_ubyte),
+            ('snd_ctl_elem_value_set_byte', [ptr, unsigned, C.c_ubyte], None),
+        ]
+        for name, args, result in signatures:
+            function = getattr(self.lib, name)
+            function.argtypes, function.restype = args, result
+        self.handle = ptr()
+        assert self.lib.snd_ctl_open(C.byref(self.handle), b'hw:0', 0) >= 0
+
+    def word(self, name, value=None):
+        lib = self.lib
+        ident, element = C.c_void_p(), C.c_void_p()
+        assert lib.snd_ctl_elem_id_malloc(C.byref(ident)) >= 0
+        try:
+            assert lib.snd_ctl_elem_value_malloc(C.byref(element)) >= 0
+            try:
+                lib.snd_ctl_elem_id_set_interface(ident, 2)
+                lib.snd_ctl_elem_id_set_name(ident, name.encode())
+                lib.snd_ctl_elem_value_set_id(element, ident)
+                assert lib.snd_ctl_elem_read(self.handle, element) >= 0
+                if value is not None:
+                    for index, byte in enumerate(struct.pack('>I', value)):
+                        lib.snd_ctl_elem_value_set_byte(element, index, byte)
+                    assert lib.snd_ctl_elem_write(self.handle, element) >= 0
+                return int.from_bytes(bytes(lib.snd_ctl_elem_value_get_byte(element, index)
+                                            for index in range(4)), 'big')
+            finally:
+                lib.snd_ctl_elem_value_free(element)
+        finally:
+            lib.snd_ctl_elem_id_free(ident)
+
+    def close(self):
+        self.lib.snd_ctl_close(self.handle)
+
+
+def main():
+    public = Path('/run/luma-tokay-audio')
+    public.mkdir(mode=0o755, exist_ok=True)
+    st = public.lstat()
+    assert stat.S_ISDIR(st.st_mode) and st.st_uid == 0 and not st.st_mode & 0o022
+    public.chmod(0o755)
+    report = public / 'speaker-calibration.json'
+    assert not report.is_symlink()
+    report.unlink(missing_ok=True)
+    run('/usr/libexec/luma-tokay-radio-check')
+    run('sha256sum', '--quiet', '-c', '/usr/share/luma/tokay/audio-modules.sha256')
+    run('sha256sum', '--quiet', '-c', '/usr/share/luma/tokay/audio-firmware.sha256')
+    mute()
+    records = read_factory_calibration()
+    for index in (0, 1):
+        dsp = Path('/sys/kernel/debug/asoc/aoc-audio') / ('spi5.' + str(index)) / 'DSP1'
+        assert (dsp / 'booted').read_text().strip() == 'Y'
+        assert (dsp / 'running').read_text().strip() == 'N', 'Calibration requires pre-start DSP'
+    controls = Controls()
+    player = None
+    try:
+        # Same pre-execution sequence as native cs35l41_hda_fw_load.
+        for prefix, record in zip(('', 'R '), records):
+            for name, value in [('CAL_AMBIENT', record[3]), ('CAL_R', record[0]),
+                                ('CAL_STATUS', record[1]), ('CAL_CHECKSUM', record[2])]:
+                controls.word(prefix + 'DSP1 Protection cd ' + name, value)
+        player = subprocess.Popen(['aplay', '-q', '-D', 'hw:0,0', '-t', 'raw', '-f',
+                                   'S16_LE', '-r', '48000', '-c', '2', '-d', '2', '/dev/zero'],
+                                  stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        time.sleep(.5)
+        assert player.poll() is None
+        for prefix, record in zip(('', 'R '), records):
+            base = prefix + 'DSP1 Protection '
+            assert controls.word(base + 'cd CAL_R_SELECTED') == record[0]
+            assert controls.word(base + 'cd CAL_SET_STATUS') == 2
+            assert controls.word(base + '400a4 HALO_STATE') == 2
+            assert controls.word(base + 'cd CSPL_STATE') == 0
+            assert controls.word(base + 'cd CSPL_ERRORNO') == 0
+        _, error = player.communicate(timeout=5)
+        assert player.returncode == 0 and not error
+        report.write_text(json.dumps({
+            'source': 'read-only persist/audio/speaker.cal',
+            'both_unit_calibrations_selected': True, 'protection_errors': False,
+            'startup_output_muted': True, 'phone_partition_writes': []}) + '\n')
+        report.chmod(0o644)
+    finally:
+        if player is not None and player.poll() is None:
+            player.terminate()
+            player.wait(timeout=3)
+        controls.close()
+        mute()
+
+
+if __name__ == '__main__':
+    main()

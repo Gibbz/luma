@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: Apache-2.0
+[Unit]
+Description=Tokay experimental native Bluetooth initialization
+Requires=luma-tokay-aoc.service
+After=systemd-udev-trigger.service luma-tokay-aoc.service
+Before=bluetooth.service
+ConditionPathExists=/run/luma/ram-boot-proof.txt
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/luma-tokay-bluetooth-start
+RemainAfterExit=yes
+TimeoutStartSec=40
+[Install]
+WantedBy=multi-user.target

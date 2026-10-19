@@ -1,0 +1,26 @@
+{
+  "digests": {
+    "SHA256_0": null,
+    "SHA256_1": null,
+    "SHA256_2": null,
+    "SHA256_3": null,
+    "SHA256_4": null,
+    "SHA256_5": null,
+    "SHA256_6": null,
+    "SHA256_7": null,
+    "SHA256_8": null,
+    "SHA256_9": null
+  },
+  "required_payloads": [
+    "luma-tokay-root.tar.gz",
+    "mali_csffw-legacy-r56p0.bin",
+    "modules-native-rfs-wire.tar.gz",
+    "tokay-capture-profile-native-rfs-wire.tar.gz",
+    "tokay-device-data-native-rfs-wire.tar",
+    "tokay-mesa-v11.tar.gz",
+    "tokay-native-radio-profile.tar.gz",
+    "tokay-radio-firmware.tar.gz",
+    "tokay-speaker-protection.tar"
+  ],
+  "instructions": "Replace each null with the SHA256 of its corresponding reviewed local input. SHA256_0 is the expected complete stock boot_a partition. Remaining placeholders appear in ram-init.in immediately after the relevant download. Keep per-unit calibration manifests private."
+}

@@ -1,0 +1,263 @@
+--- a/crates/exynos-modem/src/rfs.rs
++++ b/crates/exynos-modem/src/rfs.rs
+@@ -122,6 +122,7 @@
+ 
+ #[derive(Default)]
+ struct Fent {
++    nv_file: bool,     // only OPEN_FID/implicit NV handles may write state
+     fd: Option<File>,  // open file (read source)
+     wfd: Option<File>, // tmpfs write sink
+     size: i64,         // file size reported at OPEN
+@@ -251,6 +252,7 @@
+         self.files.insert(
+             fid,
+             Fent {
++                nv_file: nv_name(fid).is_some(),
+                 fd: src,
+                 size,
+                 ..Fent::default()
+@@ -350,16 +352,51 @@
+                     }
+                     self.read_step(fid);
+                 } else if iotype == IO_WRITE {
+-                    // Into a .part; RFS_CLOSE renames it over our copy, so an
+-                    // interrupted write is never served back to the CP.
++                    // Factory rfsd seeks to IO_REQUEST's offset and opens
++                    // its NV stage without O_TRUNC. A completed transfer is
++                    // a range update, not proof that the entire file was sent.
++                    // The -1 cursor sentinel needs separate protocol review.
++                    let source_size = file_size(&self.files[&fid].fd) as u64;
++                    let end = u64::from(off) + u64::from(iolen);
++                    if !self.files[&fid].nv_file
++                        || off == u32::MAX
++                        || iolen == 0
++                        || (source_size != 0 && end > source_size)
++                        || (source_size == 0 && off != 0)
++                    {
++                        let e = self.files.get_mut(&fid).unwrap();
++                        e.wfd = None;
++                        e.wremain = 0;
++                        self.op_error(token, fid, RFS_STATUS_INVALID_TRANSFER);
++                        return;
++                    }
+                     let part = nv_name(fid).and_then(|n| self.store.part(Kind::Efs, n).ok());
+-                    let sink = part.as_ref().and_then(|p| {
+-                        OpenOptions::new()
+-                            .write(true)
+-                            .create(true)
+-                            .truncate(true)
+-                            .open(p)
+-                            .ok()
++                    let sink = part.as_ref().and_then(|path| {
++                        (|| -> std::io::Result<File> {
++                            let mut stage = OpenOptions::new()
++                                .write(true)
++                                .create(true)
++                                .truncate(true)
++                                .mode(0o600)
++                                .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
++                                .open(path)?;
++                            if !stage.metadata()?.is_file() {
++                                return Err(std::io::Error::other("NV stage is not regular"));
++                            }
++                            if let Some(source) = self.files[&fid].fd.as_ref() {
++                                let mut source = source.try_clone()?;
++                                source.seek(SeekFrom::Start(0))?;
++                                let copied = std::io::copy(&mut source, &mut stage)?;
++                                if copied != source_size {
++                                    return Err(std::io::Error::other(
++                                        "NV source changed during staging",
++                                    ));
++                                }
++                            }
++                            stage.seek(SeekFrom::Start(u64::from(off)))?;
++                            Ok(stage)
++                        })()
++                        .ok()
+                     });
+                     if sink.is_none() {
+                         eprintln!("rfs: cannot open a write sink for fid={}", fid);
+@@ -439,11 +476,10 @@
+                     // Store::commit synchronizes the stage and directory;
+                     // dropping File alone would not make the write durable.
+                     e.wfd = None;
+-                    // Publish here, not at RFS_CLOSE: the NV files are
+-                    // implicitly open in downstream rfsd and the CP never
+-                    // closes them, so a transfer ending is the only signal
+-                    // that the image is complete. (It closed on CLOSE first,
+-                    // and the .part files simply accumulated.)
++                    // Publish the complete staged image once this requested
++                    // range has landed. Bytes outside the range were copied
++                    // from the previous read view before accepting any chunks.
++                    // NV fids can remain open, so do not wait for RFS_CLOSE.
+                     match nv_name(fid) {
+                         Some(name) => match self.store.commit(Kind::Efs, name) {
+                             Ok(path) => {
+@@ -887,13 +923,15 @@
+         for (token, content) in [(7, &b"NVNV"[..]), (8, &b"updated"[..])] {
+             rfs.handle(&write_request(token, content.len() as u32));
+             rfs.handle(&write_chunk(token, content.len() as u32, content));
+-            assert_eq!(rfs.files[&1].size, content.len() as i64);
++            assert_eq!(rfs.files[&1].size, b"original factory bytes".len() as i64);
+             let e = rfs.files.get_mut(&1).unwrap();
+             let mut readback = Vec::new();
+             let fd = e.fd.as_mut().unwrap();
+             fd.seek(SeekFrom::Start(0)).unwrap();
+             fd.read_to_end(&mut readback).unwrap();
+-            assert_eq!(readback, content);
++            let mut expected = b"original factory bytes".to_vec();
++            expected[..content.len()].copy_from_slice(content);
++            assert_eq!(readback, expected);
+             // Exercise the public wire read path without CLOSE/OPEN_FID.
+             let before_response = std::fs::metadata(&device).unwrap().len() as usize;
+             let request = [1u32, 0, content.len() as u32, IO_READ]
+@@ -911,4 +949,148 @@
+         std::fs::remove_dir_all(root).unwrap();
+         std::fs::remove_file(device).unwrap();
+     }
+-}
++    fn range_write_request(token: u16, offset: u32, length: u32) -> Vec<u8> {
++        frame(
++            RFS_IO_REQUEST,
++            token,
++            &[
++                1u32.to_le_bytes(),
++                offset.to_le_bytes(),
++                length.to_le_bytes(),
++                IO_WRITE.to_le_bytes(),
++            ]
++            .concat(),
++        )
++    }
++
++    #[test]
++    fn range_writes_preserve_untouched_nv_bytes_and_refresh_reads() {
++        let root = std::env::temp_dir().join(format!("rfs-offset-{}", std::process::id()));
++        let _ = std::fs::remove_dir_all(&root);
++        std::fs::create_dir_all(root.join("efs")).unwrap();
++        let path = root.join("efs/nv_normal.bin");
++        std::fs::write(&path, b"abcdefghijkl").unwrap();
++        let device = root.with_extension("dev");
++        let mut rfs = Rfs::new(
++            File::create(&device).unwrap(),
++            Store::new(root.clone()),
++            false,
++        );
++        for (token, offset, data, expected) in [
++            (7u16, 4u32, &b"NVNV"[..], &b"abcdNVNVijkl"[..]),
++            (8, 0, &b"XY"[..], &b"XYcdNVNVijkl"[..]),
++            (9, 10, &b"ZZ"[..], &b"XYcdNVNVijZZ"[..]),
++        ] {
++            let start = std::fs::metadata(&device).unwrap().len() as usize;
++            rfs.handle(&range_write_request(token, offset, data.len() as u32));
++            let request = std::fs::read(&device).unwrap();
++            assert_eq!(le16(&request[start..]), RFS_WRITE);
++            assert_eq!(le32(&request[start + 12..]), offset);
++            assert_eq!(std::fs::read(&path).unwrap().len(), 12);
++            rfs.handle(&write_chunk(token, data.len() as u32, data));
++            assert_eq!(std::fs::read(&path).unwrap(), expected);
++            let e = rfs.files.get_mut(&1).unwrap();
++            assert_eq!(e.size, 12);
++            let mut fresh = Vec::new();
++            let fd = e.fd.as_mut().unwrap();
++            fd.seek(SeekFrom::Start(0)).unwrap();
++            fd.read_to_end(&mut fresh).unwrap();
++            assert_eq!(fresh, expected);
++        }
++        std::fs::remove_dir_all(root).unwrap();
++        std::fs::remove_file(device).unwrap();
++    }
++
++    #[test]
++    fn unsupported_or_out_of_bounds_ranges_fail_before_staging() {
++        for (tag, offset, length) in [
++            ("sentinel", u32::MAX, 1),
++            ("empty", 0, 0),
++            ("past-end", 7, 2),
++            ("overflow", u32::MAX - 1, 4),
++        ] {
++            let root =
++                std::env::temp_dir().join(format!("rfs-range-{}-{}", std::process::id(), tag));
++            let _ = std::fs::remove_dir_all(&root);
++            std::fs::create_dir_all(root.join("efs")).unwrap();
++            let path = root.join("efs/nv_normal.bin");
++            std::fs::write(&path, b"original").unwrap();
++            let device = root.with_extension("dev");
++            let mut rfs = Rfs::new(
++                File::create(&device).unwrap(),
++                Store::new(root.clone()),
++                false,
++            );
++            rfs.handle(&range_write_request(7, offset, length));
++            assert_eq!(
++                std::fs::read(&device).unwrap(),
++                error_response(7, RFS_STATUS_INVALID_TRANSFER)
++            );
++            assert_eq!(std::fs::read(&path).unwrap(), b"original");
++            assert!(!root.join("efs/nv_normal.bin.part").exists());
++            std::fs::remove_dir_all(root).unwrap();
++            std::fs::remove_file(device).unwrap();
++        }
++    }
++
++    #[test]
++    fn nv_staging_does_not_follow_a_symlink() {
++        let root = std::env::temp_dir().join(format!("rfs-stage-link-{}", std::process::id()));
++        let _ = std::fs::remove_dir_all(&root);
++        std::fs::create_dir_all(root.join("efs")).unwrap();
++        let target = root.join("target");
++        std::fs::write(&target, b"private").unwrap();
++        std::os::unix::fs::symlink(&target, root.join("efs/nv_normal.bin.part")).unwrap();
++        let device = root.with_extension("dev");
++        let mut rfs = Rfs::new(
++            File::create(&device).unwrap(),
++            Store::new(root.clone()),
++            false,
++        );
++        rfs.handle(&range_write_request(7, 0, 4));
++        assert_eq!(
++            std::fs::read(&device).unwrap(),
++            error_response(7, RFS_STATUS_WRITE_FAILED)
++        );
++        assert_eq!(std::fs::read(&target).unwrap(), b"private");
++        assert!(!root.join("efs/nv_normal.bin").exists());
++        std::fs::remove_dir_all(root).unwrap();
++        std::fs::remove_file(device).unwrap();
++    }
++
++    #[test]
++    fn path_opened_handle_cannot_write_nv_even_with_reserved_fid() {
++        let root = std::env::temp_dir().join(format!("rfs-readonly-handle-{}", std::process::id()));
++        let _ = std::fs::remove_dir_all(&root);
++        std::fs::create_dir_all(root.join("carrier")).unwrap();
++        std::fs::write(root.join("carrier/config"), b"carrier data").unwrap();
++        let device = root.with_extension("dev");
++        let mut rfs = Rfs::new(
++            File::create(&device).unwrap(),
++            Store::new(root.clone()),
++            false,
++        );
++        rfs.carrier_roots = vec![root.join("carrier")];
++        let path = b"/vendor/firmware/carrierconfig/config";
++        let body = [
++            1u32.to_le_bytes().as_slice(),
++            (path.len() as u32).to_le_bytes().as_slice(),
++            path,
++        ]
++        .concat();
++        rfs.handle(&frame(RFS_OPEN, 1, &body));
++        let start = std::fs::metadata(&device).unwrap().len() as usize;
++        rfs.handle(&range_write_request(7, 0, 4));
++        assert_eq!(
++            &std::fs::read(&device).unwrap()[start..],
++            error_response(7, RFS_STATUS_INVALID_TRANSFER)
++        );
++        assert!(!root.join("efs/nv_normal.bin.part").exists());
++        assert_eq!(
++            std::fs::read(root.join("carrier/config")).unwrap(),
++            b"carrier data"
++        );
++        std::fs::remove_dir_all(root).unwrap();
++        std::fs::remove_file(device).unwrap();
++    }
++}

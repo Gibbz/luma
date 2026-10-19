@@ -1,0 +1,137 @@
+--- a/crates/exynos-modem/src/rfs.rs
++++ b/crates/exynos-modem/src/rfs.rs
+@@ -481,11 +481,11 @@
+                 if !self.files.contains_key(&fid) {
+                     return;
+                 }
+-                // Exact factory File handler 0xacb0 checks an active read,
+-                // payload fid and status. Its dispatcher 0xa800 deliberately
+-                // does not require the ACK token to equal the IO_REQUEST token.
++                // The complete factory File dispatcher checks the active token
++                // at 0xa56c..0xa588 before handler 0xacb0 checks state/fid/status.
++                // A stale ACK must neither advance nor cancel the current read.
+                 let e = self.files.get_mut(&fid).unwrap();
+-                if !e.read_ack_pending {
++                if !e.read_ack_pending || token != e.token {
+                     self.op_error(token, fid, RFS_STATUS_INVALID_TRANSFER);
+                     return;
+                 }
+@@ -1580,10 +1580,10 @@
+     }
+ 
+     fn read_ack(status: u32) -> Vec<u8> {
+-        // Factory dispatch does not require this token to equal the IO token.
++        // Match the active request token, as the complete factory dispatcher does.
+         frame(
+             RFS_READ,
+-            19,
++            7,
+             &[status.to_le_bytes(), 40u32.to_le_bytes()].concat(),
+         )
+     }
+@@ -1621,7 +1621,7 @@
+             &after[before..],
+             frame(
+                 RFS_OP_STATUS,
+-                19,
++                7,
+                 &[6u32.to_le_bytes(), 40u32.to_le_bytes()].concat()
+             )
+         );
+@@ -1659,7 +1659,11 @@
+                 .concat()
+             )
+         );
+-        rfs.handle(&read_ack(0));
++        rfs.handle(&frame(
++            RFS_READ,
++            21,
++            &[0u32.to_le_bytes(), 40u32.to_le_bytes()].concat(),
++        ));
+         assert!(std::fs::read(&device).unwrap().ends_with(&frame(
+             RFS_OP_STATUS,
+             21,
+@@ -1667,4 +1671,83 @@
+         )));
+         std::fs::remove_dir_all(root).unwrap();
+     }
++    #[test]
++    fn stale_read_ack_success_cannot_advance_an_active_transfer() {
++        let (root, device, mut rfs) = read_ack_fixture("stale-success");
++        let before = std::fs::read(&device).unwrap().len();
++        let remain = rfs.files[&40].rremain;
++        rfs.handle(&frame(
++            RFS_READ,
++            19,
++            &[0u32.to_le_bytes(), 40u32.to_le_bytes()].concat(),
++        ));
++        let after = std::fs::read(&device).unwrap();
++        assert_eq!(
++            &after[before..],
++            frame(
++                RFS_OP_STATUS,
++                19,
++                &[6u32.to_le_bytes(), 40u32.to_le_bytes()].concat()
++            )
++        );
++        assert_eq!(rfs.files[&40].rremain, remain);
++        assert!(rfs.files[&40].read_ack_pending);
++        rfs.handle(&read_ack(0));
++        assert_eq!(rfs.files[&40].rremain, 37);
++        std::fs::remove_dir_all(root).unwrap();
++    }
++
++    #[test]
++    fn stale_read_ack_failure_cannot_cancel_an_active_transfer() {
++        let (root, device, mut rfs) = read_ack_fixture("stale-failure");
++        let before = std::fs::read(&device).unwrap().len();
++        let remain = rfs.files[&40].rremain;
++        rfs.handle(&frame(
++            RFS_READ,
++            19,
++            &[4u32.to_le_bytes(), 40u32.to_le_bytes()].concat(),
++        ));
++        assert_eq!(rfs.files[&40].rremain, remain);
++        assert!(rfs.files[&40].read_ack_pending);
++        assert_eq!(
++            &std::fs::read(&device).unwrap()[before..],
++            frame(
++                RFS_OP_STATUS,
++                19,
++                &[6u32.to_le_bytes(), 40u32.to_le_bytes()].concat()
++            )
++        );
++        rfs.handle(&read_ack(0));
++        assert_eq!(rfs.files[&40].rremain, 37);
++        std::fs::remove_dir_all(root).unwrap();
++    }
++
++    #[test]
++    fn stale_read_ack_final_cannot_complete_an_active_transfer() {
++        let (root, device, mut rfs) = read_ack_fixture("stale-final");
++        rfs.handle(&read_ack(0));
++        rfs.handle(&read_ack(0));
++        let before = std::fs::read(&device).unwrap().len();
++        rfs.handle(&frame(
++            RFS_READ,
++            19,
++            &[0u32.to_le_bytes(), 40u32.to_le_bytes()].concat(),
++        ));
++        assert_eq!(
++            &std::fs::read(&device).unwrap()[before..],
++            frame(
++                RFS_OP_STATUS,
++                19,
++                &[6u32.to_le_bytes(), 40u32.to_le_bytes()].concat()
++            )
++        );
++        assert!(rfs.files[&40].read_ack_pending);
++        rfs.handle(&read_ack(0));
++        assert!(std::fs::read(&device).unwrap().ends_with(&frame(
++            RFS_OP_STATUS,
++            7,
++            &[0u32.to_le_bytes(), 40u32.to_le_bytes(), 0u32.to_le_bytes()].concat()
++        )));
++        std::fs::remove_dir_all(root).unwrap();
++    }
+ }

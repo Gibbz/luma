@@ -1,0 +1,9 @@
+#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+set -eu
+/usr/libexec/luma-tokay-radio-check
+sha256sum --quiet -c /usr/share/luma/tokay/aoc-firmware.sha256
+modprobe aoc
+for service in audio_input_control audio_output_control audio_capture0; do
+ grep -qw "$service" /sys/kernel/debug/aoc/services
+done

@@ -1,0 +1,340 @@
+--- a/crates/exynos-modem/src/rfs.rs
++++ b/crates/exynos-modem/src/rfs.rs
+@@ -21,7 +21,7 @@
+ use std::collections::HashMap;
+ use std::ffi::CString;
+ use std::fs::{File, OpenOptions};
+-use std::io::{Read, Seek, SeekFrom, Write};
++use std::io::{self, Read, Seek, SeekFrom, Write};
+ use std::os::unix::ffi::OsStrExt;
+ use std::os::unix::fs::OpenOptionsExt;
+ use std::os::unix::io::{AsRawFd, FromRawFd};
+@@ -125,6 +125,30 @@
+     None
+ }
+ 
++/// A WWAN write is one protocol frame. Never retry a short tail as a new
++/// frame, or spin on WouldBlock when the low-level port cannot accept it.
++fn write_frame(writer: &mut impl Write, frame: &[u8]) -> io::Result<()> {
++    loop {
++        match writer.write(frame) {
++            Ok(n) if n == frame.len() => return Ok(()),
++            Ok(0) => {
++                return Err(io::Error::new(
++                    io::ErrorKind::WriteZero,
++                    "RFS frame write made no progress",
++                ))
++            }
++            Ok(_) => {
++                return Err(io::Error::new(
++                    io::ErrorKind::InvalidData,
++                    "RFS frame was only partially written",
++                ))
++            }
++            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
++            Err(error) => return Err(error),
++        }
++    }
++}
++
+ #[derive(Default)]
+ struct Fent {
+     nv_file: bool,     // only implicit NV handles may write state
+@@ -148,6 +172,7 @@
+     files: HashMap<u32, Fent>,
+     txbuf: Vec<u8>,
+     carrier_roots: Vec<PathBuf>,
++    tx_error: Option<io::Error>, // first failed reply poisons the whole session
+ }
+ 
+ impl Rfs {
+@@ -158,6 +183,7 @@
+             verbose,
+             files: HashMap::new(),
+             txbuf: vec![0u8; 0x14 + CHUNK + 8],
++            tx_error: None,
+             carrier_roots: vec![
+                 PathBuf::from("/vendor/firmware/carrierconfig"),
+                 PathBuf::from("/carrierconfig"),
+@@ -165,11 +191,19 @@
+         }
+     }
+ 
+-    /// Best-effort write to the port; a dead fd surfaces on the next read and
+-    /// triggers a reconnect (matches the freestanding server, which ignores
+-    /// write returns).
+-    fn send(&mut self, buf: &[u8]) {
+-        let _ = self.dev.write_all(buf);
++    /// The peer must receive a complete record before the session can advance.
++    /// Keep the first error and prohibit further processing until a fresh open.
++    fn send(&mut self, buf: &[u8]) -> bool {
++        if self.tx_error.is_some() {
++            return false;
++        }
++        match write_frame(&mut self.dev, buf) {
++            Ok(()) => true,
++            Err(error) => {
++                self.tx_error = Some(error);
++                false
++            }
++        }
+     }
+ 
+     fn op_status(&mut self, token: u16, fid: u32, extra: u32) {
+@@ -223,7 +257,9 @@
+         self.txbuf[16..20].copy_from_slice(&(n as u32).to_le_bytes());
+         let end = 0x14 + n;
+         let frame = self.txbuf[..end].to_vec();
+-        self.send(&frame);
++        if !self.send(&frame) {
++            return;
++        }
+         if self.verbose {
+             eprintln!("rfs:   >> READ_RESP off={} clen={}", roff, n);
+         }
+@@ -266,6 +302,9 @@
+     }
+ 
+     fn handle(&mut self, f: &[u8]) {
++        if self.tx_error.is_some() {
++            return;
++        }
+         let n = f.len();
+         let cmd = le16(f);
+         let token = le16(&f[2..]);
+@@ -576,7 +615,8 @@
+     pfd.revents as i32
+ }
+ 
+-/// Serve the RFS port forever, reopening on error (fresh CP => fresh fid table).
++/// Reopen after a failed session, discarding its handles and partial transfers.
++/// The kernel transport must separately enforce CP reset/session generations.
+ pub fn run(dev: &Path, state_dir: PathBuf, verbose: bool) {
+     eprintln!("rfs: serving on {}", dev.display());
+     loop {
+@@ -605,6 +645,10 @@
+             Ok(_) => {} // short frame, ignore
+             Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+             Err(_) => break,
++        }
++        if let Some(error) = rfs.tx_error.take() {
++            eprintln!("rfs: reply failed; discarding session: {}", error);
++            break;
+         }
+     }
+ }
+@@ -1169,4 +1213,214 @@
+         std::fs::remove_dir_all(root).unwrap();
+         std::fs::remove_file(device).unwrap();
+     }
++    struct ScriptedWriter {
++        outcomes: std::collections::VecDeque<io::Result<usize>>,
++        calls: usize,
++    }
++
++    impl Write for ScriptedWriter {
++        fn write(&mut self, _: &[u8]) -> io::Result<usize> {
++            self.calls += 1;
++            self.outcomes
++                .pop_front()
++                .expect("unexpected second frame fragment")
++        }
++        fn flush(&mut self) -> io::Result<()> {
++            Ok(())
++        }
++    }
++
++    #[test]
++    fn interrupted_frame_write_retries_the_whole_record() {
++        let mut writer = ScriptedWriter {
++            outcomes: [Err(io::ErrorKind::Interrupted.into()), Ok(8)].into(),
++            calls: 0,
++        };
++        write_frame(&mut writer, b"complete").unwrap();
++        assert_eq!(writer.calls, 2);
++    }
++
++    #[test]
++    fn a_short_frame_write_never_sends_the_tail_as_another_record() {
++        let mut writer = ScriptedWriter {
++            outcomes: [Ok(3)].into(),
++            calls: 0,
++        };
++        assert_eq!(
++            write_frame(&mut writer, b"complete").unwrap_err().kind(),
++            io::ErrorKind::InvalidData
++        );
++        assert_eq!(writer.calls, 1);
++    }
++
++    #[test]
++    fn a_zero_frame_write_is_an_error() {
++        let mut writer = ScriptedWriter {
++            outcomes: [Ok(0)].into(),
++            calls: 0,
++        };
++        assert_eq!(
++            write_frame(&mut writer, b"complete").unwrap_err().kind(),
++            io::ErrorKind::WriteZero
++        );
++        assert_eq!(writer.calls, 1);
++    }
++
++    #[test]
++    fn a_full_ring_error_does_not_busy_retry() {
++        let mut writer = ScriptedWriter {
++            outcomes: [Err(io::ErrorKind::WouldBlock.into())].into(),
++            calls: 0,
++        };
++        assert_eq!(
++            write_frame(&mut writer, b"complete").unwrap_err().kind(),
++            io::ErrorKind::WouldBlock
++        );
++        assert_eq!(writer.calls, 1);
++    }
++
++    fn failed_transport_fixture(tag: &str) -> (Rfs, PathBuf) {
++        let root =
++            std::env::temp_dir().join(format!("rfs-reply-failure-{}-{}", std::process::id(), tag));
++        std::fs::create_dir_all(&root).unwrap();
++        let transport = root.join("read-only-transport");
++        std::fs::write(&transport, b"fixture").unwrap();
++        (
++            Rfs::new(
++                File::open(transport).unwrap(),
++                Store::new(root.clone()),
++                false,
++            ),
++            root,
++        )
++    }
++
++    #[test]
++    fn a_failed_reply_poisons_the_session_and_retains_the_first_error() {
++        let (mut rfs, root) = failed_transport_fixture("poison");
++        assert!(!rfs.send(b"first"));
++        let error = rfs.tx_error.as_ref().unwrap().raw_os_error();
++        assert!(!rfs.send(b"second"));
++        rfs.handle(&frame(
++            RFS_IO_REQUEST,
++            1,
++            &[1u32, 0, 4, IO_WRITE]
++                .into_iter()
++                .flat_map(u32::to_le_bytes)
++                .collect::<Vec<_>>(),
++        ));
++        assert!(rfs.files.is_empty());
++        assert_eq!(rfs.tx_error.as_ref().unwrap().raw_os_error(), error);
++        drop(rfs);
++        std::fs::remove_dir_all(root).unwrap();
++    }
++
++    #[test]
++    fn a_failed_read_reply_does_not_advance_the_protocol_cursor() {
++        let (mut rfs, root) = failed_transport_fixture("read-cursor");
++        let source = root.join("source");
++        std::fs::write(&source, b"original").unwrap();
++        rfs.files.insert(
++            40,
++            Fent {
++                fd: Some(File::open(source).unwrap()),
++                roff: 0,
++                rremain: 8,
++                token: 1,
++                ..Fent::default()
++            },
++        );
++        rfs.read_step(40);
++        assert!(rfs.tx_error.is_some());
++        assert_eq!(rfs.files[&40].roff, 0);
++        assert_eq!(rfs.files[&40].rremain, 8);
++        drop(rfs);
++        std::fs::remove_dir_all(root).unwrap();
++    }
++
++    #[test]
++    fn an_unsent_chunk_request_cannot_be_followed_by_a_commit() {
++        let (mut rfs, root) = failed_transport_fixture("unsent-request");
++        let directory = root.join("efs");
++        std::fs::create_dir_all(&directory).unwrap();
++        let original = directory.join("nv_normal.bin");
++        std::fs::write(&original, b"original").unwrap();
++        let request = [1u32, 0, 4, IO_WRITE]
++            .into_iter()
++            .flat_map(u32::to_le_bytes)
++            .collect::<Vec<_>>();
++        rfs.handle(&frame(RFS_IO_REQUEST, 9, &request));
++        assert!(rfs.tx_error.is_some());
++        let mut body = [0u32, 1, 4]
++            .into_iter()
++            .flat_map(u32::to_le_bytes)
++            .collect::<Vec<_>>();
++        body.extend(b"new!");
++        rfs.handle(&frame(RFS_WRITE, 9, &body));
++        assert_eq!(std::fs::read(original).unwrap(), b"original");
++        assert_eq!(rfs.files[&1].wremain, 4);
++        drop(rfs);
++        std::fs::remove_dir_all(root).unwrap();
++    }
++    #[test]
++    fn serve_exits_when_the_peer_cannot_receive_a_reply() {
++        use std::net::Shutdown;
++        use std::os::fd::OwnedFd;
++        use std::os::unix::net::UnixStream;
++        let root =
++            std::env::temp_dir().join(format!("rfs-reply-serve-exit-{}", std::process::id()));
++        let (local, mut peer) = UnixStream::pair().unwrap();
++        peer.shutdown(Shutdown::Read).unwrap();
++        let local: OwnedFd = local.into();
++        let rfs = Rfs::new(local.into(), Store::new(root), false);
++        let (done, completed) = std::sync::mpsc::channel();
++        let worker = std::thread::spawn(move || {
++            serve(rfs);
++            done.send(()).unwrap();
++        });
++        peer.write_all(&frame(RFS_CLOSE, 1, &1u32.to_le_bytes()))
++            .unwrap();
++        completed
++            .recv_timeout(Duration::from_secs(2))
++            .expect("failed reply must end session without waiting for another CP frame");
++        worker.join().unwrap();
++    }
++
++    #[test]
++    fn a_lost_completion_ack_does_not_fake_a_rollback_of_published_state() {
++        let root = std::env::temp_dir().join(format!("rfs-reply-lost-ack-{}", std::process::id()));
++        std::fs::create_dir_all(root.join("efs")).unwrap();
++        let nv = root.join("efs/nv_normal.bin");
++        std::fs::write(&nv, b"original").unwrap();
++        let transport = root.join("transport");
++        let dev = OpenOptions::new()
++            .read(true)
++            .write(true)
++            .create_new(true)
++            .open(&transport)
++            .unwrap();
++        let mut rfs = Rfs::new(dev, Store::new(root.clone()), false);
++        let request = [1u32, 0, 4, IO_WRITE]
++            .into_iter()
++            .flat_map(u32::to_le_bytes)
++            .collect::<Vec<_>>();
++        rfs.handle(&frame(RFS_IO_REQUEST, 9, &request));
++        assert!(rfs.tx_error.is_none());
++        rfs.dev = File::open(transport).unwrap();
++        let mut body = [0u32, 1, 4]
++            .into_iter()
++            .flat_map(u32::to_le_bytes)
++            .collect::<Vec<_>>();
++        body.extend(b"new!");
++        rfs.handle(&frame(RFS_WRITE, 9, &body));
++        assert!(rfs.tx_error.is_some());
++        assert_eq!(std::fs::read(nv).unwrap(), b"new!inal");
++        let source = rfs.files.get_mut(&1).unwrap().fd.as_mut().unwrap();
++        source.seek(SeekFrom::Start(0)).unwrap();
++        let mut committed = Vec::new();
++        source.read_to_end(&mut committed).unwrap();
++        assert_eq!(committed, b"new!inal");
++        drop(rfs);
++        std::fs::remove_dir_all(root).unwrap();
++    }
+ }

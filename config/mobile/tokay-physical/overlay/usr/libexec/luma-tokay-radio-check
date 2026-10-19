@@ -1,0 +1,14 @@
+#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+# Experimental RAM-only device profile; no Android service or persistent mounts.
+set -eu
+grep -qx LUMA_TOKAY_RAM_BOOT=1 /run/luma/ram-boot-proof.txt
+grep -qx PHONE_BLOCK_DEVICES_READ_ONLY=1 /run/luma/ram-boot-proof.txt
+grep -qx PERSISTENT_FILESYSTEMS_MOUNTED=0 /run/luma/ram-boot-proof.txt
+test "$(uname -r)" = 7.3.0-rc5-zumapro-luma-rfs2+
+python3 - <<'CHECK'
+from pathlib import Path
+assert b'google,tokay' in Path('/proc/device-tree/compatible').read_bytes().split(b'\0')
+assert all(p.joinpath('ro').read_text().strip()=='1' for p in Path('/sys/class/block').glob('sd*'))
+CHECK
+sha256sum --quiet -c /usr/share/luma/tokay/radio-modules.sha256

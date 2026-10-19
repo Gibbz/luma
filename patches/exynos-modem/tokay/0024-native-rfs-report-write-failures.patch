@@ -1,0 +1,218 @@
+diff --git a/crates/exynos-modem/src/rfs.rs b/crates/exynos-modem/src/rfs.rs
+index 03bfd2c..c682550 100644
+--- a/crates/exynos-modem/src/rfs.rs
++++ b/crates/exynos-modem/src/rfs.rs
+@@ -27,6 +27,11 @@ use std::time::Duration;
+ 
+ use crate::store::{Kind, Store};
+ 
++// Exact factory rfsd: failed/short write branches at 0xb078/0xb0c8
++// emit OP_STATUS with payload {status=4, fid}; invalid chunk/state uses 6.
++const RFS_STATUS_WRITE_FAILED: u32 = 4;
++const RFS_STATUS_INVALID_TRANSFER: u32 = 6;
++
+ const RFS_READ: u16 = 0x0001;
+ const RFS_WRITE: u16 = 0x0002;
+ const RFS_OP_STATUS: u16 = 0x0003;
+@@ -129,6 +134,16 @@ impl Rfs {
+         self.send(&r);
+     }
+ 
++    fn op_error(&mut self, token: u16, fid: u32, status: u32) {
++        let mut response = [0u8; 16];
++        response[0..2].copy_from_slice(&RFS_OP_STATUS.to_le_bytes());
++        response[2..4].copy_from_slice(&token.to_le_bytes());
++        response[4..8].copy_from_slice(&8u32.to_le_bytes());
++        response[8..12].copy_from_slice(&status.to_le_bytes());
++        response[12..16].copy_from_slice(&fid.to_le_bytes());
++        self.send(&response);
++    }
++
+     /// Send the next READ_RESP chunk for fid, or an OP_STATUS when done.
+     fn read_step(&mut self, fid: u32) {
+         let e = self.files.get_mut(&fid).unwrap();
+@@ -304,6 +319,8 @@ impl Rfs {
+                     });
+                     if sink.is_none() {
+                         eprintln!("rfs: cannot open a write sink for fid={}", fid);
++                        self.op_error(token, fid, RFS_STATUS_WRITE_FAILED);
++                        return;
+                     }
+                     let e = self.files.get_mut(&fid).unwrap();
+                     e.wfd = sink;
+@@ -342,13 +359,31 @@ impl Rfs {
+                 if !self.files.contains_key(&fid) {
+                     return;
+                 }
+-                let mut clen = le32(&f[0x10..]) as usize;
+-                if 0x14 + clen > n {
+-                    clen = n - 0x14;
+-                }
++                let clen = le32(&f[0x10..]) as usize;
+                 let e = self.files.get_mut(&fid).unwrap();
+-                if let Some(w) = e.wfd.as_mut() {
+-                    let _ = w.write_all(&f[0x14..0x14 + clen]);
++                if token != e.token
++                    || clen == 0
++                    || 0x14 + clen > n
++                    || e.wremain <= 0
++                    || clen as i64 > e.wremain
++                {
++                    // Never publish a truncated, stale or oversized transfer.
++                    e.wfd = None;
++                    e.wremain = 0;
++                    self.op_error(token, fid, RFS_STATUS_INVALID_TRANSFER);
++                    return;
++                }
++                let result = e
++                    .wfd
++                    .as_mut()
++                    .ok_or_else(|| std::io::Error::other("no staging file"))
++                    .and_then(|w| w.write_all(&f[0x14..0x14 + clen]));
++                if let Err(error) = result {
++                    eprintln!("rfs: write failed for fid={}: {}", fid, error);
++                    e.wfd = None;
++                    e.wremain = 0;
++                    self.op_error(token, fid, RFS_STATUS_WRITE_FAILED);
++                    return;
+                 }
+                 e.woff += clen as i64;
+                 e.wremain -= clen as i64;
+@@ -357,7 +392,8 @@ impl Rfs {
+                 } else {
+                     let woff = e.woff;
+                     let token = e.token;
+-                    // Closing the sink flushes it before the rename below.
++                    // Store::commit synchronizes the stage and directory;
++                    // dropping File alone would not make the write durable.
+                     e.wfd = None;
+                     // Publish here, not at RFS_CLOSE: the NV files are
+                     // implicitly open in downstream rfsd and the CP never
+@@ -372,10 +408,11 @@ impl Rfs {
+                                 woff,
+                                 path.display()
+                             ),
+-                            Err(e) => eprintln!(
+-                                "rfs:   write done fid={} ({} bytes) but commit failed: {}",
+-                                fid, woff, e
+-                            ),
++                            Err(e) => {
++                                eprintln!("rfs: commit failed for fid={}: {}", fid, e);
++                                self.op_error(token, fid, RFS_STATUS_WRITE_FAILED);
++                                return;
++                            }
+                         },
+                         None => eprintln!("rfs:   write done fid={} ({} bytes)", fid, woff),
+                     }
+@@ -594,4 +631,111 @@ mod tests {
+         std::fs::remove_dir_all(&root).ok();
+         std::fs::remove_file(root.with_extension("dev")).ok();
+     }
++    fn write_request(token: u16, length: u32) -> Vec<u8> {
++        frame(
++            RFS_IO_REQUEST,
++            token,
++            &[
++                1u32.to_le_bytes(),
++                0u32.to_le_bytes(),
++                length.to_le_bytes(),
++                IO_WRITE.to_le_bytes(),
++            ]
++            .concat(),
++        )
++    }
++
++    fn write_chunk(token: u16, declared: u32, bytes: &[u8]) -> Vec<u8> {
++        let mut body = [
++            0u32.to_le_bytes(),
++            1u32.to_le_bytes(),
++            declared.to_le_bytes(),
++        ]
++        .concat();
++        body.extend(bytes);
++        frame(RFS_WRITE, token, &body)
++    }
++
++    fn error_response(token: u16, status: u32) -> Vec<u8> {
++        frame(
++            RFS_OP_STATUS,
++            token,
++            &[status.to_le_bytes(), 1u32.to_le_bytes()].concat(),
++        )
++    }
++
++    #[test]
++    fn unavailable_write_storage_returns_failure_without_success_ack() {
++        let root = std::env::temp_dir().join(format!("rfs-no-storage-{}", std::process::id()));
++        std::fs::write(&root, b"blocker").unwrap();
++        let device = root.with_extension("dev");
++        let mut rfs = Rfs::new(
++            File::create(&device).unwrap(),
++            Store::new(root.clone()),
++            false,
++        );
++        rfs.handle(&write_request(7, 4));
++        assert_eq!(
++            std::fs::read(&device).unwrap(),
++            error_response(7, RFS_STATUS_WRITE_FAILED)
++        );
++        assert_eq!(std::fs::read(&root).unwrap(), b"blocker");
++        std::fs::remove_file(root).unwrap();
++        std::fs::remove_file(device).unwrap();
++    }
++
++    #[test]
++    fn commit_failure_returns_failure_without_success_ack() {
++        let root = std::env::temp_dir().join(format!("rfs-commit-failure-{}", std::process::id()));
++        std::fs::create_dir_all(root.join("efs/nv_normal.bin")).unwrap();
++        let device = root.with_extension("dev");
++        let mut rfs = Rfs::new(
++            File::create(&device).unwrap(),
++            Store::new(root.clone()),
++            false,
++        );
++        rfs.handle(&write_request(7, 4));
++        let request_bytes = std::fs::metadata(&device).unwrap().len() as usize;
++        rfs.handle(&write_chunk(7, 4, b"NVNV"));
++        assert_eq!(
++            &std::fs::read(&device).unwrap()[request_bytes..],
++            error_response(7, RFS_STATUS_WRITE_FAILED)
++        );
++        assert!(root.join("efs/nv_normal.bin").is_dir());
++        std::fs::remove_dir_all(root).unwrap();
++        std::fs::remove_file(device).unwrap();
++    }
++
++    #[test]
++    fn invalid_chunks_preserve_committed_state() {
++        for (case, token, declared, bytes) in [
++            ("truncated", 7, 4, &b"NV"[..]),
++            ("oversized", 7, 5, &b"NVNVN"[..]),
++            ("stale-token", 8, 4, &b"NVNV"[..]),
++        ] {
++            let root =
++                std::env::temp_dir().join(format!("rfs-invalid-{}-{}", std::process::id(), case));
++            std::fs::create_dir_all(root.join("efs")).unwrap();
++            std::fs::write(root.join("efs/nv_normal.bin"), b"original").unwrap();
++            let device = root.with_extension("dev");
++            let mut rfs = Rfs::new(
++                File::create(&device).unwrap(),
++                Store::new(root.clone()),
++                false,
++            );
++            rfs.handle(&write_request(7, 4));
++            let request_bytes = std::fs::metadata(&device).unwrap().len() as usize;
++            rfs.handle(&write_chunk(token, declared, bytes));
++            assert_eq!(
++                &std::fs::read(&device).unwrap()[request_bytes..],
++                error_response(token, RFS_STATUS_INVALID_TRANSFER)
++            );
++            assert_eq!(
++                std::fs::read(root.join("efs/nv_normal.bin")).unwrap(),
++                b"original"
++            );
++            std::fs::remove_dir_all(root).unwrap();
++            std::fs::remove_file(device).unwrap();
++        }
++    }
+ }

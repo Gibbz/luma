@@ -1,0 +1,252 @@
+--- a/crates/exynos-modem/src/rfs.rs
++++ b/crates/exynos-modem/src/rfs.rs
+@@ -32,6 +32,8 @@
+ 
+ // Exact factory rfsd: failed/short write branches at 0xb078/0xb0c8
+ // emit OP_STATUS with payload {status=4, fid}; invalid chunk/state uses 6.
++const RFS_STATUS_OPEN_FAILED: u32 = 1;
++const RFS_STATUS_READ_FAILED: u32 = 3;
+ const RFS_STATUS_WRITE_FAILED: u32 = 4;
+ const RFS_STATUS_INVALID_TRANSFER: u32 = 6;
+ 
+@@ -233,9 +235,16 @@
+         let e = self.files.get_mut(&fid).unwrap();
+         e.read_ack_pending = false;
+         let clen = e.rremain.min(CHUNK as i64);
+-        if clen <= 0 || e.fd.is_none() {
++        if clen <= 0 {
+             let token = e.token;
++            e.rremain = 0;
+             self.op_status(token, fid, 0);
++            return;
++        }
++        if e.fd.is_none() {
++            let token = e.token;
++            e.rremain = 0;
++            self.op_error(token, fid, RFS_STATUS_READ_FAILED);
+             return;
+         }
+         let roff = e.roff;
+@@ -246,8 +255,14 @@
+             .and_then(|_| f.read(&mut self.txbuf[0x14..0x14 + clen as usize]))
+         {
+             Ok(n) if n > 0 => n,
+-            _ => {
++            Ok(_) => {
++                self.files.get_mut(&fid).unwrap().rremain = 0;
+                 self.op_status(token, fid, 0);
++                return;
++            }
++            Err(_) => {
++                self.files.get_mut(&fid).unwrap().rremain = 0;
++                self.op_error(token, fid, RFS_STATUS_READ_FAILED);
+                 return;
+             }
+         };
+@@ -322,29 +337,36 @@
+                     return;
+                 }
+                 let fid = le32(&f[8..]);
+-                let mut plen = le32(&f[0xc..]) as usize;
+-                if 0x10 + plen > n {
+-                    plen = n - 0x10;
++                let plen = le32(&f[0xc..]) as usize;
++                if self.files.contains_key(&fid) || plen == 0 || plen > n - 0x10 {
++                    self.op_error(token, fid, RFS_STATUS_INVALID_TRANSFER);
++                    return;
+                 }
+                 let src = std::str::from_utf8(&f[0x10..0x10 + plen])
+                     .ok()
+                     .and_then(|path| open_path(path, &self.carrier_roots));
+-                let size = file_size(&src);
+-                let served = src.is_some();
++                let Some(src) = src else {
++                    // Exact factory failed-open response uses status 1.
++                    // A missing/denied path is not a successfully opened empty file.
++                    self.op_error(token, fid, RFS_STATUS_OPEN_FAILED);
++                    return;
++                };
++                let size = match src.metadata() {
++                    Ok(metadata) if metadata.len() <= u32::MAX as u64 => metadata.len(),
++                    _ => {
++                        self.op_error(token, fid, RFS_STATUS_OPEN_FAILED);
++                        return;
++                    }
++                };
+                 self.files.insert(
+                     fid,
+                     Fent {
+-                        fd: src,
+-                        size,
++                        fd: Some(src),
++                        size: size as i64,
+                         ..Fent::default()
+                     },
+                 );
+-                eprintln!(
+-                    "rfs: OPEN fid={} size={} {}",
+-                    fid,
+-                    size,
+-                    if served { "(served)" } else { "(NOT FOUND)" }
+-                );
++                eprintln!("rfs: OPEN fid={} size={} (served)", fid, size);
+                 self.op_status(token, fid, size as u32);
+             }
+             RFS_NV_UNPROTECT | RFS_NV_PROTECT | RFS_NV_BACKUP | RFS_NV_BACKUP_AND_CNF => {
+@@ -383,8 +405,7 @@
+                 // IO_REQUEST makes the CP wait/time out and can stall its IPC
+                 // (seen blocking the SIT control channel).
+                 if !self.files.contains_key(&fid) {
+-                    eprintln!("rfs:   unopened fid -> OP_STATUS");
+-                    self.op_status(token, fid, 0);
++                    self.op_error(token, fid, RFS_STATUS_INVALID_TRANSFER);
+                     return;
+                 }
+                 let e = self.files.get_mut(&fid).unwrap();
+@@ -1750,4 +1771,146 @@
+         )));
+         std::fs::remove_dir_all(root).unwrap();
+     }
++    fn file_error_open(fid: u32, advertised: u32, path: &[u8]) -> Vec<u8> {
++        frame(
++            RFS_OPEN,
++            31,
++            &[
++                fid.to_le_bytes().as_slice(),
++                advertised.to_le_bytes().as_slice(),
++                path,
++            ]
++            .concat(),
++        )
++    }
++    fn file_error_reply(fid: u32, status: u32) -> Vec<u8> {
++        frame(
++            RFS_OP_STATUS,
++            31,
++            &[status.to_le_bytes(), fid.to_le_bytes()].concat(),
++        )
++    }
++    #[test]
++    fn file_error_missing_open_does_not_create_a_successful_empty_handle() {
++        let (root, device, mut rfs) = read_ack_fixture("missing-open");
++        rfs.carrier_roots = vec![root.clone()];
++        let path = b"/vendor/firmware/carrierconfig/missing";
++        let before = std::fs::read(&device).unwrap().len();
++        rfs.handle(&file_error_open(41, path.len() as u32, path));
++        assert_eq!(
++            &std::fs::read(&device).unwrap()[before..],
++            file_error_reply(41, 1)
++        );
++        assert!(!rfs.files.contains_key(&41));
++        std::fs::remove_dir_all(root).unwrap();
++    }
++    #[test]
++    fn file_error_truncated_open_cannot_open_a_shorter_existing_path() {
++        let (root, device, mut rfs) = read_ack_fixture("truncated-open");
++        rfs.carrier_roots = vec![root.clone()];
++        let path = b"/vendor/firmware/carrierconfig/source";
++        let before = std::fs::read(&device).unwrap().len();
++        rfs.handle(&file_error_open(41, path.len() as u32 + 9, path));
++        assert_eq!(
++            &std::fs::read(&device).unwrap()[before..],
++            file_error_reply(41, 6)
++        );
++        assert!(!rfs.files.contains_key(&41));
++        std::fs::remove_dir_all(root).unwrap();
++    }
++    #[test]
++    fn file_error_duplicate_open_preserves_an_active_handle() {
++        let (root, device, mut rfs) = read_ack_fixture("duplicate-open");
++        rfs.carrier_roots = vec![root.clone()];
++        let path = b"/vendor/firmware/carrierconfig/source";
++        let before = std::fs::read(&device).unwrap().len();
++        let remaining = rfs.files[&40].rremain;
++        rfs.handle(&file_error_open(40, path.len() as u32, path));
++        assert_eq!(
++            &std::fs::read(&device).unwrap()[before..],
++            file_error_reply(40, 6)
++        );
++        assert_eq!(rfs.files[&40].rremain, remaining);
++        assert!(rfs.files[&40].read_ack_pending);
++        std::fs::remove_dir_all(root).unwrap();
++    }
++    #[test]
++    fn file_error_unknown_io_handle_is_not_reported_as_success() {
++        let (root, device, mut rfs) = read_ack_fixture("unknown-io");
++        let before = std::fs::read(&device).unwrap().len();
++        rfs.handle(&frame(
++            RFS_IO_REQUEST,
++            31,
++            &[
++                99u32.to_le_bytes(),
++                0u32.to_le_bytes(),
++                3u32.to_le_bytes(),
++                IO_READ.to_le_bytes(),
++            ]
++            .concat(),
++        ));
++        assert_eq!(
++            &std::fs::read(&device).unwrap()[before..],
++            file_error_reply(99, 6)
++        );
++        assert!(!rfs.files.contains_key(&99));
++        std::fs::remove_dir_all(root).unwrap();
++    }
++    #[test]
++    fn file_error_read_failure_is_not_reported_as_success() {
++        let (root, device, mut rfs) = read_ack_fixture("read-error");
++        let before = std::fs::read(&device).unwrap().len();
++        let e = rfs.files.get_mut(&40).unwrap();
++        e.fd = Some(File::open(&root).unwrap());
++        e.token = 31; // read(2) on a directory returns EISDIR on Linux.
++        rfs.read_step(40);
++        assert_eq!(
++            &std::fs::read(&device).unwrap()[before..],
++            file_error_reply(40, 3)
++        );
++        assert!(!rfs.files[&40].read_ack_pending);
++        assert_eq!(rfs.files[&40].rremain, 0);
++        std::fs::remove_dir_all(root).unwrap();
++    }
++    #[test]
++    fn file_error_handling_still_allows_a_real_empty_carrier_file() {
++        let (root, device, mut rfs) = read_ack_fixture("valid-empty");
++        rfs.carrier_roots = vec![root.clone()];
++        std::fs::write(root.join("empty"), b"").unwrap();
++        let path = b"/vendor/firmware/carrierconfig/empty";
++        let before = std::fs::read(&device).unwrap().len();
++        rfs.handle(&file_error_open(41, path.len() as u32, path));
++        assert_eq!(
++            &std::fs::read(&device).unwrap()[before..],
++            frame(
++                RFS_OP_STATUS,
++                31,
++                &[0u32.to_le_bytes(), 41u32.to_le_bytes(), 0u32.to_le_bytes()].concat()
++            )
++        );
++        assert!(rfs.files[&41].fd.is_some());
++        let before = std::fs::read(&device).unwrap().len();
++        rfs.handle(&frame(
++            RFS_IO_REQUEST,
++            31,
++            &[
++                41u32.to_le_bytes(),
++                0u32.to_le_bytes(),
++                1u32.to_le_bytes(),
++                IO_READ.to_le_bytes(),
++            ]
++            .concat(),
++        ));
++        assert_eq!(
++            &std::fs::read(&device).unwrap()[before..],
++            frame(
++                RFS_OP_STATUS,
++                31,
++                &[0u32.to_le_bytes(), 41u32.to_le_bytes(), 0u32.to_le_bytes()].concat()
++            )
++        );
++        assert!(!rfs.files[&41].read_ack_pending);
++        assert_eq!(rfs.files[&41].rremain, 0);
++        std::fs::remove_dir_all(root).unwrap();
++    }
+ }

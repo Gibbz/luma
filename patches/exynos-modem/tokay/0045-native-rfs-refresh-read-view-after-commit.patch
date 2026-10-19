@@ -1,0 +1,102 @@
+--- a/crates/exynos-modem/src/rfs.rs
++++ b/crates/exynos-modem/src/rfs.rs
+@@ -446,12 +446,46 @@
+                     // and the .part files simply accumulated.)
+                     match nv_name(fid) {
+                         Some(name) => match self.store.commit(Kind::Efs, name) {
+-                            Ok(path) => eprintln!(
+-                                "rfs:   write done fid={} ({} bytes) -> {}",
+-                                fid,
+-                                woff,
+-                                path.display()
+-                            ),
++                            Ok(path) => {
++                                // Atomic replacement leaves an existing File
++                                // reading the old inode. NV fids stay open
++                                // across transfers, so refresh before ACKing.
++                                let refreshed = OpenOptions::new()
++                                    .read(true)
++                                    .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
++                                    .open(&path)
++                                    .and_then(|file| {
++                                        let metadata = file.metadata()?;
++                                        if !metadata.is_file() {
++                                            return Err(std::io::Error::other(
++                                                "committed NV file is not regular",
++                                            ));
++                                        }
++                                        Ok((file, metadata.len()))
++                                    });
++                                match refreshed {
++                                    Ok((file, size)) => {
++                                        e.fd = Some(file);
++                                        e.size = size as i64;
++                                    }
++                                    Err(error) => {
++                                        // Commit has already completed: do
++                                        // not pretend to roll it back, but
++                                        // never keep serving the old inode.
++                                        e.fd = None;
++                                        e.size = 0;
++                                        eprintln!("rfs: committed NV reopen failed: {}", error);
++                                        self.op_error(token, fid, RFS_STATUS_WRITE_FAILED);
++                                        return;
++                                    }
++                                }
++                                eprintln!(
++                                    "rfs:   write done fid={} ({} bytes) -> {}",
++                                    fid,
++                                    woff,
++                                    path.display()
++                                );
++                            }
+                             Err(e) => {
+                                 eprintln!("rfs: commit failed for fid={}: {}", fid, e);
+                                 self.op_error(token, fid, RFS_STATUS_WRITE_FAILED);
+@@ -836,4 +870,45 @@
+         assert_eq!(text, "fallback");
+         std::fs::remove_dir_all(&root).unwrap();
+     }
+-}
++    #[test]
++    fn completed_atomic_write_refreshes_implicitly_open_read_view() {
++        let root = std::env::temp_dir().join(format!("rfs-read-refresh-{}", std::process::id()));
++        std::fs::create_dir_all(root.join("efs")).unwrap();
++        let path = root.join("efs/nv_normal.bin");
++        std::fs::write(&path, b"original factory bytes").unwrap();
++        let device = root.with_extension("dev");
++        let mut rfs = Rfs::new(
++            File::create(&device).unwrap(),
++            Store::new(root.clone()),
++            false,
++        );
++        rfs.open_fid(1);
++        let mut old_inode = File::open(&path).unwrap();
++        for (token, content) in [(7, &b"NVNV"[..]), (8, &b"updated"[..])] {
++            rfs.handle(&write_request(token, content.len() as u32));
++            rfs.handle(&write_chunk(token, content.len() as u32, content));
++            assert_eq!(rfs.files[&1].size, content.len() as i64);
++            let e = rfs.files.get_mut(&1).unwrap();
++            let mut readback = Vec::new();
++            let fd = e.fd.as_mut().unwrap();
++            fd.seek(SeekFrom::Start(0)).unwrap();
++            fd.read_to_end(&mut readback).unwrap();
++            assert_eq!(readback, content);
++            // Exercise the public wire read path without CLOSE/OPEN_FID.
++            let before_response = std::fs::metadata(&device).unwrap().len() as usize;
++            let request = [1u32, 0, content.len() as u32, IO_READ]
++                .into_iter()
++                .flat_map(u32::to_le_bytes)
++                .collect::<Vec<_>>();
++            rfs.handle(&frame(RFS_IO_REQUEST, token + 10, &request));
++            let response = std::fs::read(&device).unwrap();
++            assert_eq!(le16(&response[before_response..]), RFS_READ);
++            assert_eq!(&response[before_response + 20..], content);
++        }
++        let mut historical = Vec::new();
++        old_inode.read_to_end(&mut historical).unwrap();
++        assert_eq!(historical, b"original factory bytes");
++        std::fs::remove_dir_all(root).unwrap();
++        std::fs::remove_file(device).unwrap();
++    }
++}

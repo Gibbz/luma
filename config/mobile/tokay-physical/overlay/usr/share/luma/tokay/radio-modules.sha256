@@ -1,0 +1,6 @@
+2ff323657ddba7e3f53225a2a07cfb6effdf0cccb867f1af9ba764b6ea08d135  /usr/lib/modules/7.3.0-rc5-zumapro-luma-rfs2+/kernel/drivers/bluetooth/btbcm.ko
+faac26b1b13b3319bd6f2e72b78faa5d25accdc42d8e69be4e5b96ec0981d24b  /usr/lib/modules/7.3.0-rc5-zumapro-luma-rfs2+/kernel/drivers/bluetooth/hci_aoc.ko
+2908de1b7c231047ee71b9e40c44f8f8ff7305c6edd798725f2f1bec466d7136  /usr/lib/modules/7.3.0-rc5-zumapro-luma-rfs2+/kernel/drivers/net/wireless/broadcom/brcm80211/brcmfmac/brcmfmac.ko
+125a2c499fc74d8c3eb0dc49710e60210822eab007508481e4ae4884571af594  /usr/lib/modules/7.3.0-rc5-zumapro-luma-rfs2+/kernel/drivers/net/wireless/broadcom/brcm80211/brcmfmac/wcc/brcmfmac-wcc.ko
+4a63e8f59e7286e2fbe1c178b61cf796d3cbdc5b2c403b5502bdc3d0bf621e73  /usr/lib/modules/7.3.0-rc5-zumapro-luma-rfs2+/kernel/drivers/net/wireless/broadcom/brcm80211/brcmutil/brcmutil.ko
+cf13020d921578187b5a99318ea183f209971762659573dd725cdcb9442b4747  /usr/lib/modules/7.3.0-rc5-zumapro-luma-rfs2+/kernel/drivers/soc/google/aoc.ko

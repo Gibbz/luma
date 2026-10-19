@@ -1,0 +1,129 @@
+--- a/crates/exynos-modem/src/store.rs
++++ b/crates/exynos-modem/src/store.rs
+@@ -31,7 +31,7 @@
+ 
+ use std::fs::{self, File, OpenOptions};
+ use std::io;
+-use std::os::unix::fs::OpenOptionsExt;
++use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt};
+ use std::path::{Path, PathBuf};
+ 
+ /// The default writable root. `/var/lib` is on the (writable) rootfs; the
+@@ -75,6 +75,56 @@
+     }
+ }
+ 
++/// Persist each newly created directory entry, including a new state root.
++/// Synchronizing only the leaf after rename does not persist new ancestors.
++fn create_private_dir_durable(path: &Path) -> io::Result<()> {
++    match fs::symlink_metadata(path) {
++        Ok(metadata) if metadata.is_dir() => return Ok(()),
++        Ok(_) => {
++            return Err(io::Error::new(
++                io::ErrorKind::NotADirectory,
++                "state path is not a real directory",
++            ));
++        }
++        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
++        Err(error) => return Err(error),
++    }
++    let parent = path
++        .parent()
++        .filter(|p| !p.as_os_str().is_empty())
++        .unwrap_or_else(|| Path::new("."));
++    create_private_dir_durable(parent)?;
++    match fs::DirBuilder::new().mode(0o700).create(path) {
++        Ok(()) => {}
++        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
++            if !fs::symlink_metadata(path)?.is_dir() {
++                return Err(io::Error::new(
++                    io::ErrorKind::NotADirectory,
++                    "state directory creation raced with non-directory",
++                ));
++            }
++        }
++        Err(error) => return Err(error),
++    }
++    File::open(path)?.sync_all()?;
++    File::open(parent)?.sync_all()?;
++    Ok(())
++}
++
++fn validate_state_dir(path: &Path) -> io::Result<()> {
++    let metadata = fs::symlink_metadata(path)?;
++    if !metadata.is_dir()
++        || metadata.uid() != unsafe { libc::geteuid() }
++        || metadata.mode() & 0o022 != 0
++    {
++        return Err(io::Error::new(
++            io::ErrorKind::PermissionDenied,
++            "state directory must be owned and not group/world-writable",
++        ));
++    }
++    Ok(())
++}
++
+ pub struct Store {
+     root: PathBuf,
+ }
+@@ -87,7 +137,10 @@
+     /// Our directory for @kind, created on demand.
+     fn dir(&self, kind: Kind) -> io::Result<PathBuf> {
+         let d = self.root.join(kind.subdir());
+-        fs::create_dir_all(&d)?;
++        create_private_dir_durable(&self.root)?;
++        validate_state_dir(&self.root)?;
++        create_private_dir_durable(&d)?;
++        validate_state_dir(&d)?;
+         Ok(d)
+     }
+ 
+@@ -221,4 +274,47 @@
+         assert_eq!(fs::read(target).unwrap(), b"untouched");
+         fs::remove_dir_all(root).unwrap();
+     }
+-}
++    #[test]
++    fn newly_created_state_ancestors_are_private() {
++        let root = tmp("durable-private");
++        let store = Store::new(root.join("nested/state"));
++        let stage = store.part(Kind::Efs, "nv_normal.bin").unwrap();
++        assert_eq!(stage, root.join("nested/state/efs/nv_normal.bin.part"));
++        for path in [
++            &root,
++            &root.join("nested"),
++            &root.join("nested/state"),
++            &root.join("nested/state/efs"),
++        ] {
++            assert_eq!(fs::symlink_metadata(path).unwrap().mode() & 0o777, 0o700);
++        }
++        fs::write(&stage, b"complete").unwrap();
++        let path = store.commit(Kind::Efs, "nv_normal.bin").unwrap();
++        assert_eq!(fs::read(path).unwrap(), b"complete");
++        fs::remove_dir_all(root).unwrap();
++    }
++
++    #[test]
++    fn state_subdirectory_symlink_is_rejected() {
++        let root = tmp("dir-link");
++        fs::create_dir_all(root.join("outside")).unwrap();
++        std::os::unix::fs::symlink(root.join("outside"), root.join("efs")).unwrap();
++        let store = Store::new(root.clone());
++        assert!(store.part(Kind::Efs, "nv_normal.bin").is_err());
++        assert_eq!(fs::read_dir(root.join("outside")).unwrap().count(), 0);
++        fs::remove_dir_all(root).unwrap();
++    }
++
++    #[test]
++    fn writable_shared_state_root_is_rejected_without_chmod() {
++        use std::os::unix::fs::PermissionsExt;
++        let root = tmp("shared-root");
++        fs::create_dir_all(&root).unwrap();
++        fs::set_permissions(&root, fs::Permissions::from_mode(0o777)).unwrap();
++        let store = Store::new(root.clone());
++        assert!(store.part(Kind::Efs, "nv_normal.bin").is_err());
++        assert_eq!(fs::symlink_metadata(&root).unwrap().mode() & 0o777, 0o777);
++        assert!(!root.join("efs").exists());
++        fs::remove_dir_all(root).unwrap();
++    }
++}

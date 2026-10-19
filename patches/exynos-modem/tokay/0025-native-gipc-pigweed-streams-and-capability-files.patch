@@ -1,0 +1,701 @@
+diff --git a/crates/exynos-modem/proto/gipc.proto b/crates/exynos-modem/proto/gipc.proto
+index 4415641..edf4562 100644
+--- a/crates/exynos-modem/proto/gipc.proto
++++ b/crates/exynos-modem/proto/gipc.proto
+@@ -1,31 +1,9 @@
+-// The GEMS "GIPC" wire schema for oem_ipc3 (channel 0x84), the second protobuf
+-// protocol the CP speaks on the OEM channels. It is NOT the ModemSvcMessage
+-// envelope of oem_ipc1/oem_ipc0: the payload rides an explicit bytes field and
+-// the service is named by a pair of hashes rather than by a message id.
+-//
+-// The envelope below is reconstructed from the wire -- the stock daemon's own
+-// traffic in research/re/smp_boot.strace (fd 11) -- so the field names are ours.
+-// The field numbers, wire types and semantics are what stock sends and accepts.
+-//
+-// It is reconstructed because there is nothing to recover: unlike oem_ipc0 and
+-// oem_ipc1, this envelope has no embedded FileDescriptorProto. The whole vendor
+-// partition was scanned with scripts/extract-protos.py -- 303 distinct
+-// descriptors, 3,235 messages including nested ones -- and searched by shape
+-// rather than by name: no message anywhere declares 32-bit fields at 3 and 4
+-// with a bytes payload at 5, and none even has a bytes field at 5 beside a
+-// 32-bit field at 3. The CP firmware image carries no descriptors at all. So
+-// the envelope is framed by hand around a protobuf payload, which also explains
+-// the 32-bit service/method hashes where a generated RPC would carry names.
+-//
+-// Note the payloads DO have descriptors (gems.gtemperature and the rest, in
+-// research/exynos-modem/shared_modem_platform/) -- only this wrapper is
+-// bespoke. Do not
+-// re-search for it; a decompiler would add field names, not behaviour, and the
+-// ack this file encodes is byte-identical to the stock daemon's.
+-//
+-// The service payloads are the opposite: those ARE descriptor-derived, from
+-// research/exynos-modem/shared_modem_platform/gtemperature.proto (package gems.gtemperature), kept
+-// field-exact.
++// Native GIPC uses the Pigweed pw_rpc RpcPacket field layout.
++// Reference: pigweed/pigweed e61759609aa18cd49c3bb05f5f21400bf4e28df3,
++// pw_rpc/internal/packet.proto and pw_rpc/py/pw_rpc/ids.py.
++// Service/method hashes and payload descriptors independently match the exact
++// CP41.260814.003.B1 factory shared_modem_platform binary. No vendor code runs.
++// Optional fields retain the original temperature response byte representation.
+ 
+ syntax = "proto2";
+ 
+@@ -45,9 +23,11 @@ message GipcMessage {
+   //   0x52ad37c9 / 0x179f1afd  the boot handshake
+   optional fixed32 service = 3;
+   optional fixed32 method = 4;
+-  // The service message, absent when empty (an ack carries no payload).
++  // The service payload. A streaming packet is not a completed RPC.
+   optional bytes payload = 5;
+-  // Transaction id; a response echoes the request's.
++  // Pigweed status code, omitted for OK.
++  optional uint32 status = 6;
++  // Call ID; every stream packet and completion echoes the request.
+   optional uint32 sequence = 7;
+ }
+ 
+@@ -63,3 +43,20 @@ message ModemTemperatureSensor {
+ message ModemTemperatureSetRequest {
+   repeated ModemTemperatureSensor sensors = 1;
+ }
++
++// UecapFileService.Read request layout recovered from the factory's bounded
++// StreamDecoder MessageField table and handler at 0x302020. Field 3 is retained
++// opaquely; the observed factory handler uses size, block_size, file_name and
++// optional preprocessing payload. Filtering requests are not silently ignored.
++message GipcUecapReadRequest {
++  optional uint32 size = 1;
++  optional uint32 block_size = 2;
++  optional uint32 selector = 3;
++  optional string file_name = 4;
++  optional bytes preprocessing_payload = 5;
++}
++
++// Factory handler 0x302394 encodes each stream payload as bytes field 1.
++message GipcUecapReadChunk {
++  optional bytes data = 1;
++}
+diff --git a/crates/exynos-modem/src/gipc.rs b/crates/exynos-modem/src/gipc.rs
+index ce72cb2..d2509b0 100644
+--- a/crates/exynos-modem/src/gipc.rs
++++ b/crates/exynos-modem/src/gipc.rs
+@@ -1,189 +1,254 @@
+-//! The oem_ipc3 channel (`/dev/umts_oem3`), the GEMS "GIPC" services.
++//! Native Pigweed RPC services on the modem's GIPC channel.
+ //!
+-//! The same `shared_modem_platform` that owns oem_ipc1 owns this one, but the
+-//! envelope is different (proto/gipc.proto) and so is the traffic: the CP's own
+-//! temperature sensors and its modem statistics. Unlike the coex indications on
+-//! oem_ipc0, **these want an answer** -- downstream acks every one, and on
+-//! mainline the CP sent a single temperature report and then stopped, which is
+-//! what an unacked service looks like from the outside.
+-//!
+-//! The ack needs no knowledge of the service: it is the request's envelope with
+-//! the type flipped to 1 and the payload dropped. So this handler answers
+-//! everything and decodes only what it can usefully log.
++//! The exact factory's service descriptors and the official pw_rpc hash agree.
++//! A RESPONSE completes a call; it cannot acknowledge a streaming REQUEST.
++//! Capability files are served only from the configured, verified firmware root.
++//! This handler does not execute Android code or alter vendor/unit partitions.
+ 
++use crate::chan::{self, Handler};
++use crate::pb::gipc::{
++    GipcMessage, GipcUecapReadChunk, GipcUecapReadRequest, ModemTemperatureSetRequest,
++};
++use prost::Message;
+ use std::collections::HashSet;
+-use std::path::Path;
++use std::fs::OpenOptions;
++use std::io::Read;
++use std::os::unix::fs::OpenOptionsExt;
++use std::path::{Component, Path, PathBuf};
+ use std::sync::Mutex;
+ 
+-use prost::Message;
+-
+-use crate::chan::{self, Handler};
+-use crate::pb::gipc::{GipcMessage, ModemTemperatureSetRequest};
+-
+-/// `service` of gems.gtemperature, whose payload we decode for the log line.
+-const SVC_GTEMPERATURE: u32 = 0x4b10_e343;
+-/// Every service the stock daemon dispatches, recovered by walking its GIPC
+-/// tables in /vendor/bin/shared_modem_platform (see
+-/// docs/subsystems/modem/reference/cpif-channels.md). The names are compiled
+-/// away -- the tables map hash to handler function, nothing else -- so only the
+-/// two we identified from captured traffic can be named. The rest still earn
+-/// their place: a hash in this list is a service the stock daemon also knows,
+-/// while a hash absent from it is behaviour no stock build had.
+-const STOCK_SERVICES: &[(u32, u32, &str)] = &[
+-    (0x1d2d_a839, 2, ""),
+-    (0x7f07_7c92, 4, ""),
+-    (0x4b10_e343, 1, "gtemperature"),
+-    (0x51dd_d8d6, 4, "modem_stat"),
+-    (0x0730_0417, 2, ""),
+-    (0x4e39_c4ae, 5, ""),
+-];
+-
+-/// How to describe a service hash in the log.
+-fn service_name(hash: u32) -> String {
+-    match STOCK_SERVICES.iter().find(|(h, _, _)| *h == hash) {
+-        Some((_, _, name)) if !name.is_empty() => (*name).to_string(),
+-        Some((_, n, _)) => format!("unnamed stock service ({} methods)", n),
+-        None => "NOT IN THE STOCK TABLE".to_string(),
+-    }
+-}
+-
+-/// A CP -> AP request or indication; the AP answers with type 1.
+ const TYPE_REQUEST: u32 = 0;
+ const TYPE_RESPONSE: u32 = 1;
++const TYPE_CLIENT_STREAM: u32 = 2;
++const TYPE_CLIENT_ERROR: u32 = 4;
++const TYPE_SERVER_ERROR: u32 = 5;
++const TYPE_SERVER_STREAM: u32 = 7;
++const TYPE_CLIENT_COMPLETION: u32 = 8;
++const INVALID_ARGUMENT: u32 = 3;
++const NOT_FOUND: u32 = 5;
++const RESOURCE_EXHAUSTED: u32 = 8;
++const FAILED_PRECONDITION: u32 = 9;
++const UNIMPLEMENTED: u32 = 12;
++const INTERNAL: u32 = 13;
++const SVC_GTEMPERATURE: u32 = 0x4b10e343;
++const METHOD_TEMPERATURE: u32 = 0x594d0257;
++const SVC_UECAP: u32 = 0xe62d33e2;
++const METHOD_READ: u32 = 0x5b7866da;
++const MAX_CAPABILITY_BYTES: usize = 500_000;
++const MAX_BLOCK_BYTES: usize = 4000;
++const MAX_STREAMS: usize = 64;
++// Names, method IDs and streaming direction come from factory descriptors.
++const STREAM_SINKS: &[(u32, u32)] = &[
++    (0x1d2da839, 0x7d70d341), // ExtendedLog.LogInd
++    (0x4e39c4ae, 0x0500bd5b), // gems.gipc.UserspaceLog.SentLog
++    (0x51ddd8d6, 0xa7400466), // ModemStat.SendReport
++    (0xd6717151, 0xe742c79d), // EventInsightService.PushEvents
++];
++const UNARY_SINKS: &[(u32, u32)] = &[
++    (SVC_GTEMPERATURE, METHOD_TEMPERATURE),
++    (0x1d2da839, 0xd2d3e5ed), // ExtendedLog.LogFlushReq; empty response
++];
++type CallKey = (u32, u32, u32, u32);
+ 
+-/// Serve the GIPC channel forever (see [`chan::run`]).
+-pub fn run(dev: &Path, verbose: bool) {
+-    let g = Gipc::new(verbose);
+-    eprintln!(
+-        "gipc: serving {}{}",
+-        dev.display(),
+-        if verbose { " (verbose)" } else { "" }
+-    );
+-    chan::run(dev, &g);
++pub fn run(dev: &Path, uecap_dir: PathBuf, verbose: bool) {
++    let handler = Gipc::with_uecap_dir(uecap_dir, verbose);
++    eprintln!("gipc: native Pigweed RPC on {}", dev.display());
++    chan::run(dev, &handler);
+ }
+ 
+ pub struct Gipc {
++    uecap_dir: PathBuf,
+     verbose: bool,
+-    /// (service, method) pairs already reported, so a service we do not decode
+-    /// is named once rather than every time it arrives.
+-    seen: Mutex<HashSet<(u32, u32)>>,
++    streams: Mutex<HashSet<CallKey>>,
+ }
+ 
+ impl Handler for Gipc {
+     fn name(&self) -> &str {
+         "gipc"
+     }
+-
+     fn handle(&self, frame: &[u8]) -> Vec<Vec<u8>> {
+         Gipc::handle(self, frame)
+     }
+ }
+ 
+ impl Gipc {
+-    pub fn new(verbose: bool) -> Gipc {
+-        Gipc {
++    #[cfg(test)]
++    pub fn new(verbose: bool) -> Self {
++        Self::with_uecap_dir(PathBuf::from("/unused-test-firmware"), verbose)
++    }
++
++    pub fn with_uecap_dir(uecap_dir: PathBuf, verbose: bool) -> Self {
++        Self {
++            uecap_dir,
+             verbose,
+-            seen: Mutex::new(HashSet::new()),
++            streams: Mutex::new(HashSet::new()),
++        }
++    }
++
++    fn reply(req: &GipcMessage, kind: u32, payload: Option<Vec<u8>>, status: u32) -> Vec<u8> {
++        GipcMessage {
++            r#type: Some(kind),
++            endpoint: req.endpoint,
++            service: req.service,
++            method: req.method,
++            payload,
++            sequence: req.sequence,
++            status: (status != 0).then_some(status),
+         }
++        .encode_to_vec()
++    }
++
++    fn error(req: &GipcMessage, status: u32) -> Vec<Vec<u8>> {
++        vec![Self::reply(req, TYPE_SERVER_ERROR, None, status)]
+     }
+ 
+-    /// Decode one frame and return the encoded replies (0 or 1).
+     pub fn handle(&self, frame: &[u8]) -> Vec<Vec<u8>> {
+         let req = match GipcMessage::decode(frame) {
+-            Ok(m) => m,
+-            Err(e) => {
+-                eprintln!(
+-                    "gipc: decode failed ({} bytes): {} [{}]",
+-                    frame.len(),
+-                    e,
+-                    chan::hex(frame)
+-                );
++            Ok(message) => message,
++            Err(_) => {
++                eprintln!("gipc: malformed envelope, {} bytes", frame.len());
+                 return Vec::new();
+             }
+         };
+-
+-        // Anything already carrying type 1 is an answer to something we sent;
+-        // we send nothing, so it is unexpected. Never ack an ack.
+-        if req.r#type != Some(TYPE_REQUEST) {
++        let kind = req.r#type.unwrap_or(TYPE_REQUEST);
++        let service = req.service.unwrap_or(0);
++        let method = req.method.unwrap_or(0);
++        let pair = (service, method);
++        let key = (
++            req.endpoint.unwrap_or(0),
++            service,
++            method,
++            req.sequence.unwrap_or(0),
++        );
++        if kind == TYPE_CLIENT_ERROR {
++            self.streams.lock().unwrap().remove(&key);
++            return Vec::new();
++        }
++        if kind == TYPE_CLIENT_STREAM || kind == TYPE_CLIENT_COMPLETION {
++            let mut streams = self.streams.lock().unwrap();
++            if !streams.contains(&key) {
++                return Self::error(&req, FAILED_PRECONDITION);
++            }
++            if kind == TYPE_CLIENT_STREAM {
++                return Vec::new();
++            }
++            streams.remove(&key);
++            return vec![Self::reply(&req, TYPE_RESPONSE, None, 0)];
++        }
++        // Never acknowledge a server response or an error as a new request.
++        if kind != TYPE_REQUEST {
++            return Vec::new();
++        }
++        if self.verbose {
+             eprintln!(
+-                "gipc: unexpected type {:?} from service {:#010x} seq {:?}",
+-                req.r#type,
+-                req.service.unwrap_or(0),
+-                req.sequence
++                "gipc: request service={service:#010x} method={method:#010x} call={} bytes={}",
++                req.sequence.unwrap_or(0),
++                req.payload.as_ref().map_or(0, Vec::len)
+             );
++        }
++        if pair == (SVC_UECAP, METHOD_READ) {
++            return self.read_uecap(&req);
++        }
++        if STREAM_SINKS.contains(&pair) {
++            let mut streams = self.streams.lock().unwrap();
++            if streams.len() >= MAX_STREAMS && !streams.contains(&key) {
++                return Self::error(&req, RESOURCE_EXHAUSTED);
++            }
++            streams.insert(key);
++            // These services have empty responses. Their diagnostic data is
++            // deliberately not retained or printed; completion drains the RPC.
+             return Vec::new();
+         }
++        if UNARY_SINKS.contains(&pair) {
++            if pair == (SVC_GTEMPERATURE, METHOD_TEMPERATURE) {
++                if ModemTemperatureSetRequest::decode(req.payload.as_deref().unwrap_or(&[]))
++                    .is_err()
++                {
++                    return Self::error(&req, INVALID_ARGUMENT);
++                }
++            }
++            return vec![Self::reply(&req, TYPE_RESPONSE, None, 0)];
++        }
++        eprintln!("gipc: unsupported service={service:#010x} method={method:#010x}");
++        Self::error(&req, UNIMPLEMENTED)
++    }
+ 
+-        self.log(&req);
+-
+-        vec![GipcMessage {
+-            r#type: Some(TYPE_RESPONSE),
+-            endpoint: req.endpoint,
+-            service: req.service,
+-            method: req.method,
+-            payload: None,
+-            sequence: req.sequence,
++    fn read_uecap(&self, req: &GipcMessage) -> Vec<Vec<u8>> {
++        let request = match GipcUecapReadRequest::decode(req.payload.as_deref().unwrap_or(&[])) {
++            Ok(request) => request,
++            Err(_) => return Self::error(req, INVALID_ARGUMENT),
++        };
++        if request
++            .preprocessing_payload
++            .as_ref()
++            .is_some_and(|payload| !payload.is_empty())
++        {
++            // Serving unfiltered content here would falsely claim to have
++            // applied the requested carrier/band capability policy.
++            return Self::error(req, UNIMPLEMENTED);
+         }
+-        .encode_to_vec()]
+-    }
+-
+-    /// One line per request. Temperature is decoded because it is the reason
+-    /// this channel is interesting: it is the only path by which the CP's own
+-    /// sensors reach the AP.
+-    fn log(&self, req: &GipcMessage) {
+-        let svc = req.service.unwrap_or(0);
+-        let payload = req.payload.as_deref().unwrap_or(&[]);
+-        if svc == SVC_GTEMPERATURE {
+-            match ModemTemperatureSetRequest::decode(payload) {
+-                Ok(t) => {
+-                    let temps: Vec<String> = t
+-                        .sensors
+-                        .iter()
+-                        .map(|s| {
+-                            format!(
+-                                "{}:{:.1}C",
+-                                s.index.unwrap_or(-1),
+-                                s.temperature.unwrap_or(0) as f64 / 1000.0
+-                            )
+-                        })
+-                        .collect();
+-                    eprintln!("gipc: cp temperature {}", temps.join(" "));
+-                }
+-                Err(e) => eprintln!(
+-                    "gipc: temperature decode failed: {} [{}]",
+-                    e,
+-                    chan::hex(payload)
+-                ),
++        let block = request.block_size.unwrap_or(0) as usize;
++        let limit = request.size.unwrap_or(0) as usize;
++        if block == 0 || limit == 0 {
++            return Self::error(req, INVALID_ARGUMENT);
++        }
++        if block > MAX_BLOCK_BYTES || limit > MAX_CAPABILITY_BYTES {
++            return Self::error(req, RESOURCE_EXHAUSTED);
++        }
++        let name = request.file_name.as_deref().unwrap_or("");
++        let mut components = Path::new(name).components();
++        if name.is_empty()
++            || !matches!(components.next(), Some(Component::Normal(_)))
++            || components.next().is_some()
++        {
++            return Self::error(req, INVALID_ARGUMENT);
++        }
++        let file = match OpenOptions::new()
++            .read(true)
++            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
++            .open(self.uecap_dir.join(name))
++        {
++            Ok(file) => file,
++            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
++                return Self::error(req, NOT_FOUND)
+             }
+-            return;
+-        }
+-        // Everything else is acked without being understood, so say so -- once
+-        // per service, unconditionally. This is the detection path for the CP
+-        // moving a service onto GIPC (see the legacy/GIPC split in
+-        // docs/subsystems/modem/reference/cpif-channels.md): a new service
+-        // appearing here is exactly what that would look like, and it must not
+-        // need -v to be visible.
+-        let method = req.method.unwrap_or(0);
+-        let first = self
+-            .seen
+-            .lock()
+-            .map(|mut s| s.insert((svc, method)))
+-            .unwrap_or(true);
+-        if first || self.verbose {
+-            eprintln!(
+-                "gipc <= {} service {:#010x} method {:#010x} seq {:?}: {}{}",
+-                service_name(svc),
+-                svc,
+-                method,
+-                req.sequence,
+-                crate::detail::describe_raw(payload),
+-                if first && !self.verbose {
+-                    " (further ones need -v)"
+-                } else {
+-                    ""
+-                }
+-            );
++            Err(_) => return Self::error(req, INVALID_ARGUMENT),
++        };
++        let metadata = match file.metadata() {
++            Ok(metadata) if metadata.is_file() => metadata,
++            _ => return Self::error(req, INVALID_ARGUMENT),
++        };
++        if metadata.len() > MAX_CAPABILITY_BYTES as u64 {
++            return Self::error(req, RESOURCE_EXHAUSTED);
++        }
++        let mut data = Vec::new();
++        if file
++            .take(MAX_CAPABILITY_BYTES as u64 + 1)
++            .read_to_end(&mut data)
++            .is_err()
++        {
++            return Self::error(req, INTERNAL);
++        }
++        if data.len() > MAX_CAPABILITY_BYTES {
++            return Self::error(req, RESOURCE_EXHAUSTED);
++        }
++        // The factory clamps the read to the CP's requested buffer size.
++        data.truncate(limit);
++        let mut replies = Vec::new();
++        for bytes in data.chunks(block) {
++            let payload = GipcUecapReadChunk {
++                data: Some(bytes.to_vec()),
++            }
++            .encode_to_vec();
++            replies.push(Self::reply(req, TYPE_SERVER_STREAM, Some(payload), 0));
+         }
++        replies.push(Self::reply(req, TYPE_RESPONSE, None, 0));
++        eprintln!(
++            "gipc: served capability file, {} bytes in {} stream packets",
++            data.len(),
++            replies.len() - 1
++        );
++        replies
+     }
+ }
+ 
+@@ -241,4 +306,199 @@ mod tests {
+     fn garbage_is_dropped_not_answered() {
+         assert!(Gipc::new(false).handle(&[0xff, 0xff, 0xff]).is_empty());
+     }
++    fn packet(kind: u32, pair: (u32, u32), call: u32, payload: Option<Vec<u8>>) -> GipcMessage {
++        GipcMessage {
++            r#type: Some(kind),
++            endpoint: Some(132),
++            service: Some(pair.0),
++            method: Some(pair.1),
++            payload,
++            sequence: Some(call),
++            status: None,
++        }
++    }
++
++    #[test]
++    fn client_streams_complete_only_after_client_completion() {
++        for &pair in STREAM_SINKS {
++            let handler = Gipc::new(false);
++            let request = packet(TYPE_REQUEST, pair, 9, None);
++            assert!(handler.handle(&request.encode_to_vec()).is_empty());
++            let chunk = packet(TYPE_CLIENT_STREAM, pair, 9, Some(vec![8, 1]));
++            assert!(handler.handle(&chunk.encode_to_vec()).is_empty());
++            let done = packet(TYPE_CLIENT_COMPLETION, pair, 9, None);
++            let replies = handler.handle(&done.encode_to_vec());
++            assert_eq!(replies.len(), 1);
++            let result = GipcMessage::decode(replies[0].as_slice()).unwrap();
++            assert_eq!(result.r#type, Some(TYPE_RESPONSE));
++            assert_eq!(result.sequence, Some(9));
++            assert_eq!(result.endpoint, Some(132));
++            assert_eq!(result.status, None);
++            assert!(result.payload.is_none());
++        }
++    }
++
++    #[test]
++    fn cancellation_is_isolated_by_call_and_channel() {
++        let handler = Gipc::new(false);
++        let pair = STREAM_SINKS[0];
++        for call in [1, 2] {
++            assert!(handler
++                .handle(&packet(TYPE_REQUEST, pair, call, None).encode_to_vec())
++                .is_empty());
++        }
++        assert!(handler
++            .handle(&packet(TYPE_CLIENT_ERROR, pair, 1, None).encode_to_vec())
++            .is_empty());
++        let late = handler.handle(&packet(TYPE_CLIENT_STREAM, pair, 1, None).encode_to_vec());
++        assert_eq!(
++            GipcMessage::decode(late[0].as_slice()).unwrap().status,
++            Some(FAILED_PRECONDITION)
++        );
++        let mut wrong_channel = packet(TYPE_CLIENT_COMPLETION, pair, 2, None);
++        wrong_channel.endpoint = Some(99);
++        let wrong = handler.handle(&wrong_channel.encode_to_vec());
++        assert_eq!(
++            GipcMessage::decode(wrong[0].as_slice()).unwrap().status,
++            Some(FAILED_PRECONDITION)
++        );
++        let good = handler.handle(&packet(TYPE_CLIENT_COMPLETION, pair, 2, None).encode_to_vec());
++        assert_eq!(
++            GipcMessage::decode(good[0].as_slice()).unwrap().r#type,
++            Some(TYPE_RESPONSE)
++        );
++    }
++
++    #[test]
++    fn stream_registry_is_bounded() {
++        let handler = Gipc::new(false);
++        let pair = STREAM_SINKS[0];
++        for call in 0..MAX_STREAMS as u32 {
++            assert!(handler
++                .handle(&packet(TYPE_REQUEST, pair, call, None).encode_to_vec())
++                .is_empty());
++        }
++        let full = handler.handle(&packet(TYPE_REQUEST, pair, 100, None).encode_to_vec());
++        assert_eq!(
++            GipcMessage::decode(full[0].as_slice()).unwrap().status,
++            Some(RESOURCE_EXHAUSTED)
++        );
++    }
++
++    fn fixture(tag: &str) -> PathBuf {
++        let root = std::env::temp_dir().join(format!("tokay-gipc-{tag}-{}", std::process::id()));
++        let _ = std::fs::remove_dir_all(&root);
++        std::fs::create_dir_all(&root).unwrap();
++        root
++    }
++
++    fn read_request(name: &str, block: u32) -> GipcMessage {
++        let request = GipcUecapReadRequest {
++            size: Some(500_000),
++            block_size: Some(block),
++            selector: Some(1),
++            file_name: Some(name.to_string()),
++            preprocessing_payload: None,
++        };
++        packet(
++            TYPE_REQUEST,
++            (SVC_UECAP, METHOD_READ),
++            6,
++            Some(request.encode_to_vec()),
++        )
++    }
++
++    #[test]
++    fn capability_stream_reassembles_exact_source_and_keeps_call_id() {
++        let root = fixture("reassemble");
++        let data: Vec<u8> = (0..10_037).map(|i| (i % 251) as u8).collect();
++        std::fs::write(root.join("lte_fixture.binarypb"), &data).unwrap();
++        let handler = Gipc::with_uecap_dir(root.clone(), false);
++        let replies = handler.handle(&read_request("lte_fixture.binarypb", 4000).encode_to_vec());
++        assert_eq!(replies.len(), 4);
++        let mut assembled = Vec::new();
++        for (i, reply) in replies.iter().enumerate() {
++            let packet = GipcMessage::decode(reply.as_slice()).unwrap();
++            assert_eq!(packet.sequence, Some(6));
++            assert_eq!(packet.endpoint, Some(132));
++            assert_eq!(packet.service, Some(SVC_UECAP));
++            assert_eq!(packet.method, Some(METHOD_READ));
++            assert_eq!(packet.status, None);
++            if i < 3 {
++                assert_eq!(packet.r#type, Some(TYPE_SERVER_STREAM));
++                let chunk = GipcUecapReadChunk::decode(packet.payload.unwrap().as_slice()).unwrap();
++                let bytes = chunk.data.unwrap();
++                assert!(bytes.len() <= 4000);
++                assembled.extend(bytes);
++            } else {
++                assert_eq!(packet.r#type, Some(TYPE_RESPONSE));
++                assert!(packet.payload.is_none());
++            }
++        }
++        assert_eq!(assembled, data);
++        std::fs::remove_dir_all(root).unwrap();
++    }
++
++    #[test]
++    fn firmware_paths_are_confined_and_links_are_rejected() {
++        let root = fixture("paths");
++        let handler = Gipc::with_uecap_dir(root.clone(), false);
++        std::fs::write(root.join("source"), b"fixture").unwrap();
++        std::os::unix::fs::symlink(root.join("source"), root.join("link")).unwrap();
++        for name in [
++            "../source",
++            "/etc/shadow",
++            "nested/source",
++            ".",
++            "..",
++            "link",
++            "",
++        ] {
++            let replies = handler.handle(&read_request(name, 4000).encode_to_vec());
++            assert_eq!(replies.len(), 1);
++            let response = GipcMessage::decode(replies[0].as_slice()).unwrap();
++            assert_eq!(response.r#type, Some(TYPE_SERVER_ERROR));
++            assert_eq!(response.status, Some(INVALID_ARGUMENT));
++        }
++        std::fs::remove_dir_all(root).unwrap();
++    }
++
++    #[test]
++    fn capability_errors_do_not_send_successful_empty_files() {
++        let root = fixture("errors");
++        let handler = Gipc::with_uecap_dir(root.clone(), false);
++        let missing = handler.handle(&read_request("missing", 4000).encode_to_vec());
++        assert_eq!(
++            GipcMessage::decode(missing[0].as_slice()).unwrap().status,
++            Some(NOT_FOUND)
++        );
++        for block in [0, 4001] {
++            let replies = handler.handle(&read_request("missing", block).encode_to_vec());
++            let response = GipcMessage::decode(replies[0].as_slice()).unwrap();
++            assert_eq!(response.r#type, Some(TYPE_SERVER_ERROR));
++            assert!(response.status.is_some());
++        }
++        let mut request = read_request("missing", 4000);
++        let mut payload =
++            GipcUecapReadRequest::decode(request.payload.unwrap().as_slice()).unwrap();
++        payload.preprocessing_payload = Some(vec![8, 1]);
++        request.payload = Some(payload.encode_to_vec());
++        let replies = handler.handle(&request.encode_to_vec());
++        assert_eq!(
++            GipcMessage::decode(replies[0].as_slice()).unwrap().status,
++            Some(UNIMPLEMENTED)
++        );
++        std::fs::remove_dir_all(root).unwrap();
++    }
++
++    #[test]
++    fn unsupported_services_return_pigweed_error_without_fake_ack() {
++        let handler = Gipc::new(false);
++        let replies =
++            handler.handle(&packet(TYPE_REQUEST, (0x1234, 0x5678), 42, None).encode_to_vec());
++        let response = GipcMessage::decode(replies[0].as_slice()).unwrap();
++        assert_eq!(response.r#type, Some(TYPE_SERVER_ERROR));
++        assert_eq!(response.status, Some(UNIMPLEMENTED));
++        assert_eq!(response.sequence, Some(42));
++    }
+ }
+diff --git a/crates/exynos-modem/src/main.rs b/crates/exynos-modem/src/main.rs
+index 565bc29..fd885ff 100644
+--- a/crates/exynos-modem/src/main.rs
++++ b/crates/exynos-modem/src/main.rs
+@@ -187,12 +187,13 @@ fn main() {
+     // so no early request is lost.
+     if let Some(dev) = cfg.oem.resolve(DEFAULT_OEM_DEV) {
+         let sd = state_dir.clone();
++        let oem_uecap_dir = uecap_dir.clone();
+         handles.push(thread::spawn(move || {
+-            oem::run(&dev, uecap_dir, sd, verbose)
++            oem::run(&dev, oem_uecap_dir, sd, verbose)
+         }));
+     }
+     if let Some(dev) = cfg.gipc.resolve(DEFAULT_GIPC_DEV) {
+-        handles.push(thread::spawn(move || gipc::run(&dev, verbose)));
++        handles.push(thread::spawn(move || gipc::run(&dev, uecap_dir, verbose)));
+     }
+     if let Some(dev) = cfg.radioext.resolve(DEFAULT_RADIOEXT_DEV) {
+         handles.push(thread::spawn(move || radioext::run(&dev, verbose)));

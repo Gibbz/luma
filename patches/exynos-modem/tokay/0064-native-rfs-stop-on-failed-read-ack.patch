@@ -1,0 +1,202 @@
+--- a/crates/exynos-modem/src/rfs.rs
++++ b/crates/exynos-modem/src/rfs.rs
+@@ -151,15 +151,16 @@
+ 
+ #[derive(Default)]
+ struct Fent {
+-    nv_file: bool,     // only implicit NV handles may write state
+-    fd: Option<File>,  // open file (read source)
+-    wfd: Option<File>, // tmpfs write sink
+-    size: i64,         // file size reported at OPEN
+-    roff: i64,         // read cursor
+-    rremain: i64,      // bytes left to serve for the active read
+-    woff: i64,         // write cursor
+-    wremain: i64,      // bytes left to sink for the active write
+-    token: u16,        // active IO_REQUEST token, echoed in chunks
++    nv_file: bool,          // only implicit NV handles may write state
++    fd: Option<File>,       // open file (read source)
++    wfd: Option<File>,      // tmpfs write sink
++    size: i64,              // file size reported at OPEN
++    roff: i64,              // read cursor
++    read_ack_pending: bool, // a successfully sent chunk still awaits peer status
++    rremain: i64,           // bytes left to serve for the active read
++    woff: i64,              // write cursor
++    wremain: i64,           // bytes left to sink for the active write
++    token: u16,             // active IO_REQUEST token, echoed in chunks
+ }
+ 
+ struct Rfs {
+@@ -230,6 +231,7 @@
+     /// Send the next READ_RESP chunk for fid, or an OP_STATUS when done.
+     fn read_step(&mut self, fid: u32) {
+         let e = self.files.get_mut(&fid).unwrap();
++        e.read_ack_pending = false;
+         let clen = e.rremain.min(CHUNK as i64);
+         if clen <= 0 || e.fd.is_none() {
+             let token = e.token;
+@@ -266,6 +268,7 @@
+         let e = self.files.get_mut(&fid).unwrap();
+         e.roff += n as i64;
+         e.rremain -= n as i64;
++        e.read_ack_pending = true;
+     }
+ 
+     /// Ask the modem for the next write chunk for fid.
+@@ -384,7 +387,10 @@
+                     self.op_status(token, fid, 0);
+                     return;
+                 }
+-                self.files.get_mut(&fid).unwrap().token = token;
++                let e = self.files.get_mut(&fid).unwrap();
++                e.token = token;
++                e.read_ack_pending = false;
++                e.rremain = 0;
+                 if iotype == IO_READ {
+                     if self.files[&fid].nv_file && self.files[&fid].fd.is_none() {
+                         self.op_error(token, fid, RFS_STATUS_INVALID_TRANSFER);
+@@ -475,10 +481,25 @@
+                 if !self.files.contains_key(&fid) {
+                     return;
+                 }
+-                if self.files[&fid].rremain > 0 {
++                // Exact factory File handler 0xacb0 checks an active read,
++                // payload fid and status. Its dispatcher 0xa800 deliberately
++                // does not require the ACK token to equal the IO_REQUEST token.
++                let e = self.files.get_mut(&fid).unwrap();
++                if !e.read_ack_pending {
++                    self.op_error(token, fid, RFS_STATUS_INVALID_TRANSFER);
++                    return;
++                }
++                e.read_ack_pending = false;
++                if le32(&f[8..]) != 0 {
++                    // A peer failure cancels this transfer. Do not send more
++                    // source bytes or claim successful completion afterward.
++                    e.rremain = 0;
++                    return;
++                }
++                if e.rremain > 0 {
+                     self.read_step(fid);
+                 } else {
+-                    let token = self.files[&fid].token;
++                    let token = e.token;
+                     self.op_status(token, fid, 0);
+                 }
+             }
+@@ -1533,4 +1554,117 @@
+         assert!(!root.join("efs/nv_normal.bin.part").exists());
+         std::fs::remove_dir_all(root).unwrap();
+     }
++    fn read_ack_fixture(label: &str) -> (PathBuf, PathBuf, Rfs) {
++        let root =
++            std::env::temp_dir().join(format!("rfs-read-ack-{}-{}", label, std::process::id()));
++        std::fs::create_dir_all(&root).unwrap();
++        let source = root.join("source");
++        crate::store::write_test_fixture(&source, &vec![0x31; CHUNK * 2 + 37]).unwrap();
++        let device = root.join("device");
++        let mut rfs = Rfs::new(
++            File::create(&device).unwrap(),
++            Store::new(root.clone()),
++            false,
++        );
++        rfs.files.insert(
++            40,
++            Fent {
++                fd: Some(File::open(&source).unwrap()),
++                token: 7,
++                rremain: (CHUNK * 2 + 37) as i64,
++                ..Fent::default()
++            },
++        );
++        rfs.read_step(40);
++        (root, device, rfs)
++    }
++
++    fn read_ack(status: u32) -> Vec<u8> {
++        // Factory dispatch does not require this token to equal the IO token.
++        frame(
++            RFS_READ,
++            19,
++            &[status.to_le_bytes(), 40u32.to_le_bytes()].concat(),
++        )
++    }
++
++    #[test]
++    fn failed_read_ack_stops_transfer_without_more_data_or_success() {
++        let (root, device, mut rfs) = read_ack_fixture("failed");
++        let before = std::fs::read(&device).unwrap();
++        rfs.handle(&read_ack(4));
++        assert_eq!(std::fs::read(&device).unwrap(), before);
++        assert_eq!(rfs.files[&40].rremain, 0);
++        std::fs::remove_dir_all(root).unwrap();
++    }
++
++    #[test]
++    fn failed_final_read_ack_does_not_claim_success() {
++        let (root, device, mut rfs) = read_ack_fixture("final");
++        rfs.handle(&read_ack(0));
++        rfs.handle(&read_ack(0));
++        assert_eq!(rfs.files[&40].rremain, 0);
++        let before = std::fs::read(&device).unwrap();
++        rfs.handle(&read_ack(6));
++        assert_eq!(std::fs::read(&device).unwrap(), before);
++        std::fs::remove_dir_all(root).unwrap();
++    }
++
++    #[test]
++    fn read_ack_after_cancellation_is_rejected_as_inactive() {
++        let (root, device, mut rfs) = read_ack_fixture("inactive");
++        rfs.handle(&read_ack(4));
++        let before = std::fs::read(&device).unwrap().len();
++        rfs.handle(&read_ack(0));
++        let after = std::fs::read(&device).unwrap();
++        assert_eq!(
++            &after[before..],
++            frame(
++                RFS_OP_STATUS,
++                19,
++                &[6u32.to_le_bytes(), 40u32.to_le_bytes()].concat()
++            )
++        );
++        std::fs::remove_dir_all(root).unwrap();
++    }
++
++    #[test]
++    fn new_read_request_recovers_after_peer_cancels_read() {
++        let (root, device, mut rfs) = read_ack_fixture("recover");
++        rfs.handle(&read_ack(4));
++        let before = std::fs::read(&device).unwrap().len();
++        rfs.handle(&frame(
++            RFS_IO_REQUEST,
++            21,
++            &[
++                40u32.to_le_bytes(),
++                0u32.to_le_bytes(),
++                3u32.to_le_bytes(),
++                IO_READ.to_le_bytes(),
++            ]
++            .concat(),
++        ));
++        let after = std::fs::read(&device).unwrap();
++        assert_eq!(
++            &after[before..],
++            frame(
++                RFS_READ,
++                21,
++                &[
++                    40u32.to_le_bytes().as_slice(),
++                    0u32.to_le_bytes().as_slice(),
++                    3u32.to_le_bytes().as_slice(),
++                    b"111"
++                ]
++                .concat()
++            )
++        );
++        rfs.handle(&read_ack(0));
++        assert!(std::fs::read(&device).unwrap().ends_with(&frame(
++            RFS_OP_STATUS,
++            21,
++            &[0u32.to_le_bytes(), 40u32.to_le_bytes(), 0u32.to_le_bytes()].concat()
++        )));
++        std::fs::remove_dir_all(root).unwrap();
++    }
+ }

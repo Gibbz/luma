@@ -1,0 +1,6 @@
+f98a3c033700e320e30294955ec0880b4331a0ac57c66ef89fb9a9ea872a3a73  /usr/lib/modules/7.3.0-rc5-zumapro-luma-rfs2+/kernel/drivers/firmware/cirrus/cs_dsp.ko
+269d082d5c30a1a1e86c475a31ebe679b3719f1f0936dec03baf76f77303f7c7  /usr/lib/modules/7.3.0-rc5-zumapro-luma-rfs2+/kernel/sound/soc/codecs/snd-soc-cs35l41-lib.ko
+8dde857c2d5f00534b78b312c382ba5150dec4ae8c00178abc1ab6dc06e6bb9e  /usr/lib/modules/7.3.0-rc5-zumapro-luma-rfs2+/kernel/sound/soc/codecs/snd-soc-cs35l41-spi.ko
+1c6134a005c15bd921f8db6e0cf01f0ad588b729bb9d0830105d7a3311ef09eb  /usr/lib/modules/7.3.0-rc5-zumapro-luma-rfs2+/kernel/sound/soc/codecs/snd-soc-cs35l41.ko
+8ccac9d7593b2079fcfdce7f2d2c4f8fba4ff936d38264ff8693e548006a068f  /usr/lib/modules/7.3.0-rc5-zumapro-luma-rfs2+/kernel/sound/soc/codecs/snd-soc-wm-adsp.ko
+9653c3b4f15555f270b42bbed111dde6937f361c620b5d128704bebb3f0412a4  /usr/lib/modules/7.3.0-rc5-zumapro-luma-rfs2+/kernel/sound/soc/google/snd-soc-google-aoc.ko

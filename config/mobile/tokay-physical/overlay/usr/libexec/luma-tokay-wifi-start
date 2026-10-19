@@ -1,0 +1,25 @@
+#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+set -eu
+/usr/libexec/luma-tokay-radio-check
+sha256sum --quiet -c /usr/share/luma/tokay/wifi-firmware.sha256
+modprobe brcmfmac
+python3 - <<'CHECK'
+from pathlib import Path
+import time
+expected=Path('/proc/device-tree/wlan/local-mac-address').read_bytes()
+assert len(expected)==6 and expected[0]&3==0 and any(expected)
+for attempt in range(300):
+ paths=list(Path('/sys/class/net').glob('*/device/driver'))
+ matches=[p.parent.parent for p in paths if p.resolve().name=='brcmfmac']
+ assert len(matches)<=1,'Multiple Wi-Fi devices: refuse to guess'
+ if matches:
+  try:actual=bytes.fromhex((matches[0]/'address').read_text().strip().replace(':',''))
+  except FileNotFoundError:pass  # udev may rename wlan0 while it is checked
+  else:
+   assert actual==expected,'Refuse an address that differs from provisioned hardware address'
+   break
+ time.sleep(.1)
+else:raise RuntimeError('Native Wi-Fi did not finish asynchronous firmware startup within 30 seconds')
+print('Tokay native Wi-Fi: firmware and provisioned address verified')
+CHECK

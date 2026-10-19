@@ -1,0 +1,190 @@
+Subject: [PATCH] wwan: s5xxx: fence runtime admission and notification against reset
+
+The pinned base and ordered prerequisite RFS patches are recorded in
+kernel-wwan-tx-fence-audit.json. The runtime online
+check, ring publication and SEND notification must share tx_lock with
+reset. Keep the internal GNSS codeload's pre-ONLINE path explicit.
+
+Provenance: review of the pinned native driver, reproduced by three
+actual driver/MMIO KUnit regressions. All 43 fixed tests pass, including
+an actual internal GNSS command with emulated CP completion. No hardware
+or carrier qualification is claimed. No human sign-off is added.
+
+---
+diff --git a/drivers/net/wwan/s5xxx_modem.c b/drivers/net/wwan/s5xxx_modem.c
+--- a/drivers/net/wwan/s5xxx_modem.c
++++ b/drivers/net/wwan/s5xxx_modem.c
+@@ -1833,20 +1833,36 @@
+ 	return 0;
+ }
+ 
++/* Runtime admission, ring publication and notification share the reset fence.
++ * Only the internal GNSS codeload may submit before PHONE_START/ONLINE.
++ */
++static int s5xxx_ring_tx_common(struct s5xxx_modem *sm, const struct s5xxx_txring *r,
++				u16 *frame_seq, u8 ch, u8 *ch_seq, u32 max,
++				const u8 *data, u32 len, int full_err, bool require_online)
++{
++	unsigned long flags;
++	int ret;
++
++	spin_lock_irqsave(&sm->tx_lock, flags);
++	if (require_online && !READ_ONCE(sm->online)) {
++		ret = -ENODEV;
++		goto unlock;
++	}
++	ret = s5xxx_ring_tx_locked(sm, r, frame_seq, ch, ch_seq, max,
++				   data, len, full_err);
++	if (!ret)
++		s5xxx_send_ipc_irq(sm, S5XXX_INT_VALID | r->int_flag);
++unlock:
++	spin_unlock_irqrestore(&sm->tx_lock, flags);
++	return ret;
++}
++
+ static int s5xxx_ring_tx(struct s5xxx_modem *sm, const struct s5xxx_txring *r,
+ 			 u16 *frame_seq, u8 ch, u8 *ch_seq, u32 max,
+ 			 const u8 *data, u32 len, int full_err)
+ {
+-	unsigned long flags;
+-	int ret;
+-
+-	spin_lock_irqsave(&sm->tx_lock, flags);
+-	ret = s5xxx_ring_tx_locked(sm, r, frame_seq, ch, ch_seq, max,
+-				   data, len, full_err);
+-	spin_unlock_irqrestore(&sm->tx_lock, flags);
+-	if (!ret)
+-		s5xxx_send_ipc_irq(sm, S5XXX_INT_VALID | r->int_flag);
+-	return ret;
++	return s5xxx_ring_tx_common(sm, r, frame_seq, ch, ch_seq, max,
++				    data, len, full_err, true);
+ }
+ 
+ /* AT / control channels on the NORM_RAW ring; also the boot handshake path. */
+@@ -1919,9 +1935,9 @@
+ 	int ret;
+ 
+ 	reinit_completion(&sm->gnss_rsp);
+-	ret = s5xxx_ring_tx(sm, &s5xxx_raw_txring, &sm->frame_seq,
+-			    S5XXX_CH_GNSS_BOOT, &sm->gnss_ch_seq,
+-			    2048 - S5XXX_SIT_HDR, cmd, len, -EAGAIN);
++	ret = s5xxx_ring_tx_common(sm, &s5xxx_raw_txring, &sm->frame_seq,
++				   S5XXX_CH_GNSS_BOOT, &sm->gnss_ch_seq,
++				   2048 - S5XXX_SIT_HDR, cmd, len, -EAGAIN, false);
+ 	if (ret)
+ 		return ret;
+ 	/* Wait for the reply so commands are paced as the receiver expects;
+diff --git a/drivers/net/wwan/s5xxx_modem_test.c b/drivers/net/wwan/s5xxx_modem_test.c
+--- a/drivers/net/wwan/s5xxx_modem_test.c
++++ b/drivers/net/wwan/s5xxx_modem_test.c
+@@ -3,6 +3,7 @@
+ #include <kunit/test.h>
+ #include <kunit/device.h>
+ #include <linux/logic_iomem.h>
++#include <linux/lockdep.h>
+ #include <linux/vmalloc.h>
+ 
+ #define TEST_IO_SIZE SZ_8M
+@@ -12,6 +13,9 @@
+ 	struct s5xxx_modem sm;
+ 	u8 *memory;
+ 	unsigned int doorbells;
++	bool observe_tx_lock;
++	bool complete_gnss_on_doorbell;
++	unsigned int unfenced_doorbells;
+ };
+ 
+ static struct modem_fixture *mapping_fixture;
+@@ -41,8 +45,13 @@
+ 	if (WARN_ON(offset > TEST_IO_SIZE - size))
+ 		return;
+ 	memcpy(f->memory + offset, &value, size);
+-	if (offset == TEST_DOORBELL)
++	if (offset == TEST_DOORBELL) {
+ 		f->doorbells++;
++		if (f->complete_gnss_on_doorbell)
++			complete(&f->sm.gnss_rsp);
++		if (f->observe_tx_lock && !lockdep_is_held(&f->sm.tx_lock))
++			f->unfenced_doorbells++;
++	}
+ }
+ 
+ static void modem_test_copy_from(void *priv, void *buffer,
+@@ -387,7 +396,77 @@
+ 	KUNIT_EXPECT_EQ(test, f->doorbells, 1U);
+ }
+ 
++/* A runtime writer may pass its outer online check and then be descheduled
++ * while reset revokes the link. Exercise the actual shared transmit helper
++ * at that boundary: no bytes, sequence or notification may be published.
++ */
++static void modem_runtime_raw_after_revoke_is_rejected(struct kunit *test)
++{
++	struct modem_fixture *f = test->priv;
++	const u8 data[] = { 1, 2, 3, 4 };
++
++	s5xxx_rfs_revoke(&f->sm);
++	KUNIT_EXPECT_EQ(test, s5xxx_ipc_tx(&f->sm, S5XXX_CH_AT,
++					   data, sizeof(data)), -ENODEV);
++	KUNIT_EXPECT_EQ(test, readl(f->sm.ipc + S5XXX_RAW_TXQ_HEAD), 0U);
++	KUNIT_EXPECT_EQ(test, f->sm.frame_seq, (u16)0);
++	KUNIT_EXPECT_EQ(test, f->sm.at_ch_seq, (u8)0);
++	KUNIT_EXPECT_EQ(test, f->doorbells, 0U);
++}
++
++static void modem_runtime_fmt_after_revoke_is_rejected(struct kunit *test)
++{
++	struct modem_fixture *f = test->priv;
++	const u8 data[] = { 1, 2, 3, 4 };
++	u8 sequence = 0;
++
++	s5xxx_rfs_revoke(&f->sm);
++	KUNIT_EXPECT_EQ(test, s5xxx_ring_tx(&f->sm, &s5xxx_fmt_txring,
++					    &f->sm.fmt_frame_seq, 0xf5, &sequence, 64,
++					    data, sizeof(data), -EBUSY), -ENODEV);
++	KUNIT_EXPECT_EQ(test, readl(f->sm.ipc + S5XXX_FMT_TXQ_HEAD), 0U);
++	KUNIT_EXPECT_EQ(test, f->sm.fmt_frame_seq, (u16)0);
++	KUNIT_EXPECT_EQ(test, sequence, (u8)0);
++	KUNIT_EXPECT_EQ(test, f->doorbells, 0U);
++}
++
++static void modem_runtime_notification_is_inside_tx_fence(struct kunit *test)
++{
++	struct modem_fixture *f = test->priv;
++	const u8 data[] = { 1, 2, 3, 4 };
++
++	f->observe_tx_lock = true;
++	KUNIT_ASSERT_EQ(test, s5xxx_ipc_tx(&f->sm, S5XXX_CH_AT,
++					   data, sizeof(data)), 0);
++	KUNIT_EXPECT_EQ(test, f->doorbells, 1U);
++	KUNIT_EXPECT_EQ(test, f->unfenced_doorbells, 0U);
++}
++
++/* The private boot/codeload path legitimately runs before ONLINE. Its actual
++ * command helper must still frame, notify and receive its completion.
++ */
++static void modem_internal_gnss_boot_before_online_still_works(struct kunit *test)
++{
++	struct modem_fixture *f = test->priv;
++	const __le16 command = cpu_to_le16(S5XXX_GNSS_INIT);
++
++	init_completion(&f->sm.gnss_rsp);
++	f->sm.online = false;
++	f->observe_tx_lock = true;
++	f->complete_gnss_on_doorbell = true;
++	KUNIT_ASSERT_EQ(test, s5xxx_gnss_cmd(&f->sm, &command,
++					     sizeof(command)), 0);
++	KUNIT_EXPECT_EQ(test, f->doorbells, 1U);
++	KUNIT_EXPECT_EQ(test, f->unfenced_doorbells, 0U);
++	KUNIT_EXPECT_EQ(test, f->memory[S5XXX_RAW_TXQ_BUFF + 8],
++			(u8)S5XXX_CH_GNSS_BOOT);
++}
++
+ static struct kunit_case modem_cases[] = {
++	KUNIT_CASE(modem_internal_gnss_boot_before_online_still_works),
++	KUNIT_CASE(modem_runtime_raw_after_revoke_is_rejected),
++	KUNIT_CASE(modem_runtime_fmt_after_revoke_is_rejected),
++	KUNIT_CASE(modem_runtime_notification_is_inside_tx_fence),
+ 	KUNIT_CASE(modem_real_tx_preserves_factory_open_extension),
+ 	KUNIT_CASE(modem_real_reset_cancels_deferred_doorbell),
+ 	KUNIT_CASE(modem_real_queue_reset_cancels_deferred_doorbell),

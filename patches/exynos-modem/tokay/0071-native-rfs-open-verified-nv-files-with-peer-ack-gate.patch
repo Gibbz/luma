@@ -1,0 +1,336 @@
+Subject: [PATCH] rfs: serve reserved NV OPEN names and wait for matching ACK
+
+The exact CP41 factory dispatcher reserves IDs 1..3 for case-insensitive
+NV basenames. Its NV OPEN handlers prepare descriptors and return the
+20-byte success record, while pending command 4 waits for peer status.
+
+Provenance: factory-rfs-nv-open-audit.json and the exact-factory protected
+transition audit. Open only validated native/readonly seeds or generations;
+prevent carrier aliases in reserved IDs. Block IO/CLOSE until a matching
+fid/token ACK. Discard the prepared handle on matching failed status.
+
+Seven targeted NV OPEN cases fail against the preceding daemon; a corrupt
+seed rejection already passes. The full protection/backup lifecycle and
+carrier OPEN/CLOSE confirmation state machine remain unimplemented. No
+protected writes or physical modem qualification are added by this patch.
+
+---
+diff --git a/crates/exynos-modem/src/rfs.rs b/crates/exynos-modem/src/rfs.rs
+--- a/crates/exynos-modem/src/rfs.rs
++++ b/crates/exynos-modem/src/rfs.rs
+@@ -154,16 +154,17 @@
+ 
+ #[derive(Default)]
+ struct Fent {
+-    nv_file: bool,          // only implicit NV handles may write state
+-    fd: Option<File>,       // open file (read source)
+-    wfd: Option<File>,      // tmpfs write sink
+-    size: i64,              // file size reported at OPEN
+-    roff: i64,              // read cursor
++    nv_file: bool, // only verified implicit/explicit NV handles may write state
++    pending_nv_open: Option<u16>, // explicit NV OPEN awaits this CP acknowledgement
++    fd: Option<File>, // open file (read source)
++    wfd: Option<File>, // tmpfs write sink
++    size: i64,     // file size reported at OPEN
++    roff: i64,     // read cursor
+     read_ack_pending: bool, // a successfully sent chunk still awaits peer status
+-    rremain: i64,           // bytes left to serve for the active read
+-    woff: i64,              // write cursor
+-    wremain: i64,           // bytes left to sink for the active write
+-    token: u16,             // active IO_REQUEST token, echoed in chunks
++    rremain: i64,  // bytes left to serve for the active read
++    woff: i64,     // write cursor
++    wremain: i64,  // bytes left to sink for the active write
++    token: u16,    // active IO_REQUEST token, echoed in chunks
+ }
+ 
+ struct Rfs {
+@@ -348,6 +349,33 @@
+                 let plen = le32(&f[0xc..]) as usize;
+                 if self.files.contains_key(&fid) || plen == 0 || plen > n - 0x10 {
+                     self.op_result(token, fid, RFS_STATUS_INVALID_TRANSFER);
++                    return;
++                }
++                if let Some(expected_name) = nv_name(fid) {
++                    // The factory root dispatcher reserves IDs 1..3 and
++                    // checks their basenames with strcasecmp (0xa1bc..0xa1e4).
++                    let requested = &f[0x10..0x10 + plen];
++                    let requested = requested.strip_suffix(&[0u8][..]).unwrap_or(requested);
++                    if !requested.eq_ignore_ascii_case(expected_name.as_bytes()) {
++                        self.op_result(token, fid, RFS_STATUS_INVALID_TRANSFER);
++                        return;
++                    }
++                    self.open_nv(fid);
++                    let size = self.files[&fid]
++                        .fd
++                        .as_ref()
++                        .and_then(|file| file.metadata().ok())
++                        .map(|metadata| metadata.len())
++                        .filter(|size| *size > 0 && *size <= u32::MAX as u64);
++                    let Some(size) = size else {
++                        self.files.remove(&fid);
++                        self.op_result(token, fid, RFS_STATUS_OPEN_FAILED);
++                        return;
++                    };
++                    self.files.get_mut(&fid).unwrap().pending_nv_open = Some(token);
++                    // Preparing a verified descriptor does not complete OPEN:
++                    // factory pending command 4 commits after the peer status.
++                    self.open_status(token, fid, size as u32);
+                     return;
+                 }
+                 let src = std::str::from_utf8(&f[0x10..0x10 + plen])
+@@ -413,6 +441,10 @@
+                 // IO_REQUEST makes the CP wait/time out and can stall its IPC
+                 // (seen blocking the SIT control channel).
+                 if !self.files.contains_key(&fid) {
++                    self.op_result(token, fid, RFS_STATUS_INVALID_TRANSFER);
++                    return;
++                }
++                if self.files[&fid].pending_nv_open.is_some() {
+                     self.op_result(token, fid, RFS_STATUS_INVALID_TRANSFER);
+                     return;
+                 }
+@@ -640,10 +672,35 @@
+                     return;
+                 }
+                 let fid = le32(&f[8..]);
++                if self
++                    .files
++                    .get(&fid)
++                    .is_some_and(|entry| entry.pending_nv_open.is_some())
++                {
++                    self.op_result(token, fid, RFS_STATUS_INVALID_TRANSFER);
++                    return;
++                }
+                 self.files.remove(&fid);
+                 self.op_status(token, fid);
+             }
+-            RFS_OP_STATUS => {} // 3: modem ack -- consume
++            RFS_OP_STATUS => {
++                if n < 0x10 {
++                    return;
++                }
++                let fid = le32(&f[0xc..]);
++                let Some(entry) = self.files.get_mut(&fid) else {
++                    return;
++                };
++                if entry.pending_nv_open != Some(token) {
++                    return;
++                }
++                entry.pending_nv_open = None;
++                if le32(&f[8..]) != 0 {
++                    // Discard the prepared handle after a failed peer ACK.
++                    // A later implicit NV read must validate/reopen its seed.
++                    self.files.remove(&fid);
++                }
++            }
+             _ => eprintln!("rfs: unknown cmd={}", cmd),
+         }
+     }
+@@ -1191,7 +1248,7 @@
+     }
+ 
+     #[test]
+-    fn path_opened_handle_cannot_write_nv_even_with_reserved_fid() {
++    fn reserved_nv_fid_cannot_be_claimed_by_carrier_open() {
+         let root = std::env::temp_dir().join(format!("rfs-readonly-handle-{}", std::process::id()));
+         let _ = std::fs::remove_dir_all(&root);
+         std::fs::create_dir_all(root.join("carrier")).unwrap();
+@@ -1211,12 +1268,11 @@
+         ]
+         .concat();
+         rfs.handle(&frame(RFS_OPEN, 1, &body));
+-        let start = std::fs::metadata(&device).unwrap().len() as usize;
+-        rfs.handle(&range_write_request(7, 0, 4));
+-        assert_eq!(
+-            &std::fs::read(&device).unwrap()[start..],
+-            error_response(7, RFS_STATUS_INVALID_TRANSFER)
+-        );
++        assert_eq!(
++            std::fs::read(&device).unwrap(),
++            error_response(1, RFS_STATUS_INVALID_TRANSFER)
++        );
++        assert!(rfs.files.is_empty());
+         assert!(!root.join("efs/nv_normal.bin.part").exists());
+         assert_eq!(
+             std::fs::read(root.join("carrier/config")).unwrap(),
+@@ -2156,4 +2212,179 @@
+             [b'P'; 64]
+         );
+     }
++
++    fn factory_nv_open_frame(fid: u32, token: u16, name: &[u8]) -> Vec<u8> {
++        let mut body = [fid.to_le_bytes(), (name.len() as u32).to_le_bytes()].concat();
++        body.extend(name);
++        frame(RFS_OPEN, token, &body)
++    }
++
++    fn factory_nv_open_ack(fid: u32, token: u16, status: u32) -> Vec<u8> {
++        frame(
++            RFS_OP_STATUS,
++            token,
++            &[status.to_le_bytes(), fid.to_le_bytes()].concat(),
++        )
++    }
++
++    fn factory_nv_open_success(f: &mut FactoryNvFixture, fid: u32, name: &[u8]) {
++        let start = std::fs::metadata(&f.device).unwrap().len() as usize;
++        f.rfs.handle(&factory_nv_open_frame(fid, 0x1234, name));
++        assert_eq!(
++            &std::fs::read(&f.device).unwrap()[start..],
++            frame(
++                RFS_OP_STATUS,
++                0x1234,
++                &[0u32.to_le_bytes(), fid.to_le_bytes(), 64u32.to_le_bytes()].concat()
++            )
++        );
++    }
++
++    fn factory_nv_open_read_request(f: &mut FactoryNvFixture, fid: u32) -> Vec<u8> {
++        let start = std::fs::metadata(&f.device).unwrap().len() as usize;
++        f.rfs.handle(&frame(
++            RFS_IO_REQUEST,
++            0x5678,
++            &[
++                fid.to_le_bytes(),
++                0u32.to_le_bytes(),
++                4u32.to_le_bytes(),
++                IO_READ.to_le_bytes(),
++            ]
++            .concat(),
++        ));
++        std::fs::read(&f.device).unwrap()[start..].to_vec()
++    }
++
++    fn factory_nv_open_read_response(fid: u32, byte: u8) -> Vec<u8> {
++        let mut body = [fid.to_le_bytes(), 0u32.to_le_bytes(), 4u32.to_le_bytes()].concat();
++        body.extend([byte; 4]);
++        frame(RFS_READ, 0x5678, &body)
++    }
++
++    #[test]
++    fn factory_nv_open_all_reserved_names_return_verified_size_and_read() {
++        for (fid, name, byte, label) in [
++            (1, "nv_normal.bin", b'N', "open-normal"),
++            (2, "nv_user.bin", b'U', "open-user"),
++            (3, "nv_protected.bin", b'P', "open-protected"),
++        ] {
++            let mut f = FactoryNvFixture::new(label);
++            factory_nv_open_success(&mut f, fid, name.as_bytes());
++            f.rfs.handle(&factory_nv_open_ack(fid, 0x1234, 0));
++            assert_eq!(
++                factory_nv_open_read_request(&mut f, fid),
++                factory_nv_open_read_response(fid, byte)
++            );
++        }
++    }
++
++    #[test]
++    fn factory_nv_open_accepts_ascii_case_and_terminal_nul() {
++        let mut f = FactoryNvFixture::new("open-case");
++        factory_nv_open_success(&mut f, 2, b"NV_USER.BIN\0");
++        f.rfs.handle(&factory_nv_open_ack(2, 0x1234, 0));
++        assert_eq!(
++            factory_nv_open_read_request(&mut f, 2),
++            factory_nv_open_read_response(2, b'U')
++        );
++    }
++
++    #[test]
++    fn factory_nv_open_cannot_alias_carrier_path_into_reserved_fid() {
++        let mut f = FactoryNvFixture::new("open-alias");
++        std::fs::create_dir(f.root.join("carrier")).unwrap();
++        std::fs::write(f.root.join("carrier/config"), b"carrier data").unwrap();
++        f.rfs.carrier_roots = vec![f.root.join("carrier")];
++        f.rfs.handle(&factory_nv_open_frame(
++            2,
++            0x1234,
++            b"/vendor/firmware/carrierconfig/config",
++        ));
++        assert_eq!(
++            std::fs::read(&f.device).unwrap(),
++            factory_nv_open_ack(2, 0x1234, RFS_STATUS_INVALID_TRANSFER)
++        );
++        assert!(f.rfs.files.is_empty());
++    }
++
++    #[test]
++    fn factory_nv_open_rejects_wrong_name_for_reserved_fid() {
++        let mut f = FactoryNvFixture::new("open-name-mismatch");
++        f.rfs
++            .handle(&factory_nv_open_frame(3, 0x1234, b"nv_user.bin"));
++        assert_eq!(
++            std::fs::read(&f.device).unwrap(),
++            factory_nv_open_ack(3, 0x1234, RFS_STATUS_INVALID_TRANSFER)
++        );
++        assert!(f.rfs.files.is_empty());
++    }
++
++    #[test]
++    fn factory_nv_open_blocks_io_until_matching_ack() {
++        let mut f = FactoryNvFixture::new("open-pending");
++        factory_nv_open_success(&mut f, 2, b"nv_user.bin");
++        assert_eq!(
++            factory_nv_open_read_request(&mut f, 2),
++            factory_nv_open_ack(2, 0x5678, RFS_STATUS_INVALID_TRANSFER)
++        );
++        f.rfs.handle(&factory_nv_open_ack(2, 0x1235, 0));
++        assert_eq!(
++            factory_nv_open_read_request(&mut f, 2),
++            factory_nv_open_ack(2, 0x5678, RFS_STATUS_INVALID_TRANSFER)
++        );
++        f.rfs.handle(&factory_nv_open_ack(3, 0x1234, 0));
++        assert_eq!(
++            factory_nv_open_read_request(&mut f, 2),
++            factory_nv_open_ack(2, 0x5678, RFS_STATUS_INVALID_TRANSFER)
++        );
++        f.rfs.handle(&factory_nv_open_ack(2, 0x1234, 0));
++        assert_eq!(
++            factory_nv_open_read_request(&mut f, 2),
++            factory_nv_open_read_response(2, b'U')
++        );
++    }
++
++    #[test]
++    fn factory_nv_open_failed_ack_discards_prepared_handle() {
++        let mut f = FactoryNvFixture::new("open-failed-ack");
++        factory_nv_open_success(&mut f, 3, b"nv_protected.bin");
++        f.rfs.handle(&factory_nv_open_ack(3, 0x1234, 1));
++        assert!(!f.rfs.files.contains_key(&3));
++        assert_eq!(
++            factory_nv_open_read_request(&mut f, 3),
++            factory_nv_open_read_response(3, b'P')
++        );
++    }
++
++    #[test]
++    fn factory_nv_open_pending_close_cannot_destroy_handle() {
++        let mut f = FactoryNvFixture::new("open-close");
++        factory_nv_open_success(&mut f, 1, b"nv_normal.bin");
++        let start = std::fs::metadata(&f.device).unwrap().len() as usize;
++        f.rfs.handle(&frame(RFS_CLOSE, 0x5678, &1u32.to_le_bytes()));
++        assert_eq!(
++            &std::fs::read(&f.device).unwrap()[start..],
++            factory_nv_open_ack(1, 0x5678, RFS_STATUS_INVALID_TRANSFER)
++        );
++        assert!(f.rfs.files.contains_key(&1));
++        f.rfs.handle(&factory_nv_open_ack(1, 0x1234, 0));
++        assert_eq!(
++            factory_nv_open_read_request(&mut f, 1),
++            factory_nv_open_read_response(1, b'N')
++        );
++    }
++
++    #[test]
++    fn factory_nv_open_invalid_seed_never_creates_usable_handle() {
++        let mut f = FactoryNvFixture::new("open-invalid-seed");
++        std::fs::write(f.root.join("efs/nv_user.bin.md5"), b"bad checksum").unwrap();
++        f.rfs
++            .handle(&factory_nv_open_frame(2, 0x1234, b"nv_user.bin"));
++        assert_eq!(
++            std::fs::read(&f.device).unwrap(),
++            factory_nv_open_ack(2, 0x1234, RFS_STATUS_OPEN_FAILED)
++        );
++        assert!(f.rfs.files.is_empty());
++    }
+ }

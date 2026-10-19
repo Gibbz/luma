@@ -1,0 +1,710 @@
+--- a/crates/exynos-modem/src/store.rs
++++ b/crates/exynos-modem/src/store.rs
+@@ -4,8 +4,8 @@
+ //! Completed NV data and the factory-compatible salted-MD5 sidecar are
+ //! published as one generation, selected by an atomic pointer. An invalid
+ //! published generation blocks fallback rather than silently reverting state.
+-//! Other file kinds retain durable single-file publication. Legacy seed paths
+-//! still need separate integrity/migration qualification. Old and incomplete
++//! Other file kinds retain durable single-file publication. Legacy and vendor
++//! seed bytes must match their factory-compatible salted-MD5 sidecars. Old and incomplete
+ //! generations are retained pending a qualified recovery/cleanup policy.
+ 
+ #[path = "nv_store.rs"]
+@@ -135,9 +135,36 @@
+     /// original. None when neither exists.
+     pub fn read_path(&self, kind: Kind, name: &str) -> Option<PathBuf> {
+         if kind == Kind::Efs {
++            for directory in [&self.root, &self.root.join(kind.subdir())] {
++                match fs::symlink_metadata(directory) {
++                    Ok(_) => {
++                        if validate_state_dir(directory).is_err() {
++                            return None;
++                        }
++                    }
++                    Err(error) if error.kind() == io::ErrorKind::NotFound => {}
++                    Err(_) => return None,
++                }
++            }
+             match nv::read(&self.root.join(kind.subdir()), name) {
+                 Ok(Some(path)) => return Some(path),
+-                Ok(None) => {}
++                Ok(None) => {
++                    let own = self.root.join(kind.subdir());
++                    match nv::read_seed(&own, name) {
++                        Ok(Some(path)) => return Some(path),
++                        Ok(None) => {}
++                        Err(error) => {
++                            eprintln!("store: native NV seed unavailable: {}", error);
++                            return None;
++                        }
++                    }
++                    return nv::read_seed(Path::new(kind.vendor()?), name).unwrap_or_else(
++                        |error| {
++                            eprintln!("store: vendor NV seed unavailable: {}", error);
++                            None
++                        },
++                    );
++                }
+                 Err(error) => {
+                     eprintln!("store: native NV generation unavailable: {}", error);
+                     return None;
+@@ -182,7 +209,9 @@
+             }
+             // Corrupt published state requires explicit recovery; never accept
+             // a fresh transfer over it as though the unit had no saved state.
+-            let _ = nv::read(&directory, name)?;
++            if nv::read(&directory, name)?.is_none() {
++                let _ = nv::read_seed(&directory, name)?;
++            }
+         }
+         Ok(directory.join(format!("{}.part", name)))
+     }
+@@ -217,6 +246,32 @@
+ }
+ 
+ #[cfg(test)]
++pub(crate) fn write_test_fixture(
++    path: impl AsRef<Path>,
++    bytes: impl AsRef<[u8]>,
++) -> io::Result<()> {
++    let path = path.as_ref();
++    let bytes = bytes.as_ref();
++    fs::write(path, bytes)?;
++    if matches!(
++        path.file_name().and_then(|s| s.to_str()),
++        Some("nv_normal.bin" | "nv_protected.bin" | "nv_user.bin")
++    ) {
++        let mut digest = md5::Context::new();
++        digest.consume(bytes);
++        digest.consume(b"Samsung_SIT_RIL");
++        fs::write(
++            path.with_file_name(format!(
++                "{}.md5",
++                path.file_name().unwrap().to_str().unwrap()
++            )),
++            format!("{:x}", digest.finalize()),
++        )?;
++    }
++    Ok(())
++}
++
++#[cfg(test)]
+ mod tests {
+     use super::*;
+ 
+@@ -235,7 +290,7 @@
+         assert!(s.is_vendor(Kind::Efs, "nv_normal.bin"));
+ 
+         fs::create_dir_all(root.join("efs")).unwrap();
+-        fs::write(s.own(Kind::Efs, "nv_normal.bin"), b"ours").unwrap();
++        write_test_fixture(s.own(Kind::Efs, "nv_normal.bin"), b"ours").unwrap();
+         assert!(!s.is_vendor(Kind::Efs, "nv_normal.bin"));
+         assert_eq!(
+             s.read_path(Kind::Efs, "nv_normal.bin"),
+@@ -249,7 +304,7 @@
+         let root = tmp("part");
+         let s = Store::new(root.clone());
+         let part = s.part(Kind::Replay, "dds.bin").unwrap();
+-        fs::write(&part, b"half").unwrap();
++        write_test_fixture(&part, b"half").unwrap();
+         // A .part on disk must not become the file we hand back.
+         assert!(s.read_path(Kind::Replay, "dds.bin").is_none());
+         s.commit(Kind::Replay, "dds.bin").unwrap();
+@@ -265,7 +320,7 @@
+         let root = tmp("missing-stage");
+         let s = Store::new(root.clone());
+         fs::create_dir_all(root.join("efs")).unwrap();
+-        fs::write(s.own(Kind::Efs, "nv_normal.bin"), b"original").unwrap();
++        write_test_fixture(s.own(Kind::Efs, "nv_normal.bin"), b"original").unwrap();
+         assert!(s.commit(Kind::Efs, "nv_normal.bin").is_err());
+         assert_eq!(
+             fs::read(s.own(Kind::Efs, "nv_normal.bin")).unwrap(),
+@@ -279,9 +334,9 @@
+         let root = tmp("symlink-stage");
+         let s = Store::new(root.clone());
+         fs::create_dir_all(root.join("efs")).unwrap();
+-        fs::write(s.own(Kind::Efs, "nv_normal.bin"), b"original").unwrap();
++        write_test_fixture(s.own(Kind::Efs, "nv_normal.bin"), b"original").unwrap();
+         let target = root.join("other");
+-        fs::write(&target, b"untouched").unwrap();
++        write_test_fixture(&target, b"untouched").unwrap();
+         std::os::unix::fs::symlink(&target, s.part(Kind::Efs, "nv_normal.bin").unwrap()).unwrap();
+         assert!(s.commit(Kind::Efs, "nv_normal.bin").is_err());
+         assert_eq!(
+@@ -305,7 +360,7 @@
+         ] {
+             assert_eq!(fs::symlink_metadata(path).unwrap().mode() & 0o777, 0o700);
+         }
+-        fs::write(&stage, b"complete").unwrap();
++        write_test_fixture(&stage, b"complete").unwrap();
+         let path = store.commit(Kind::Efs, "nv_normal.bin").unwrap();
+         assert_eq!(fs::read(path).unwrap(), b"complete");
+         fs::remove_dir_all(root).unwrap();
+@@ -339,7 +394,7 @@
+         let root = tmp("coherent-sidecar");
+         let store = Store::new(root.clone());
+         let stage = store.part(Kind::Efs, "nv_normal.bin").unwrap();
+-        fs::write(stage, b"checksum fixture").unwrap();
++        write_test_fixture(stage, b"checksum fixture").unwrap();
+         let committed = store.commit(Kind::Efs, "nv_normal.bin").unwrap();
+         let sidecar = fs::read(committed.parent().unwrap().join("data.md5"))
+             .expect("the published data must have its companion sidecar");
+@@ -347,4 +402,18 @@
+         assert_eq!(fs::read(committed).unwrap(), b"checksum fixture");
+         fs::remove_dir_all(root).unwrap();
+     }
+-}
++    #[test]
++    fn a_legacy_nv_copy_without_a_checksum_is_never_served_or_staged_over() {
++        let root = tmp("legacy-missing-checksum");
++        fs::create_dir_all(root.join("efs")).unwrap();
++        std::fs::write(root.join("efs/nv_normal.bin"), b"unverified seed").unwrap();
++        let store = Store::new(root.clone());
++        assert!(store.read_path(Kind::Efs, "nv_normal.bin").is_none());
++        assert!(store.part(Kind::Efs, "nv_normal.bin").is_err());
++        assert_eq!(
++            fs::read(root.join("efs/nv_normal.bin")).unwrap(),
++            b"unverified seed"
++        );
++        fs::remove_dir_all(root).unwrap();
++    }
++}
+--- a/crates/exynos-modem/src/nv_store.rs
++++ b/crates/exynos-modem/src/nv_store.rs
+@@ -117,6 +117,46 @@
+         return Err(invalid("NV generation checksum mismatch"));
+     }
+     Ok(Some(data_path))
++}
++
++/// Verify a legacy/native seed or the read-only vendor seed. A present but
++/// invalid file is an error, never permission to fall back to another copy.
++pub(super) fn read_seed(directory: &Path, name: &str) -> io::Result<Option<PathBuf>> {
++    if !known_name(name) {
++        return Err(invalid("unknown NV seed filename"));
++    }
++    let path = directory.join(name);
++    match fs::symlink_metadata(&path) {
++        Err(error) if error.kind() == io::ErrorKind::NotFound => {
++            return match fs::symlink_metadata(directory.join(format!("{name}.md5"))) {
++                Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
++                _ => Err(invalid(
++                    "NV seed data is missing but its sidecar is present or inaccessible",
++                )),
++            };
++        }
++        Err(error) => return Err(error),
++        Ok(_) => {}
++    }
++    if !fs::symlink_metadata(directory)?.is_dir() {
++        return Err(invalid("NV seed directory is not a real directory"));
++    }
++    let mut data = regular(&path)?;
++    if data.metadata()?.len() == 0 {
++        return Err(invalid("empty NV seed"));
++    }
++    let mut sidecar = regular(&directory.join(format!("{name}.md5")))?;
++    if sidecar.metadata()?.len() != 32 {
++        return Err(invalid("invalid NV seed checksum size"));
++    }
++    let mut expected = [0; 32];
++    sidecar.read_exact(&mut expected)?;
++    if !expected.iter().all(u8::is_ascii_hexdigit)
++        || !expected.eq_ignore_ascii_case(checksum(&mut data)?.as_bytes())
++    {
++        return Err(invalid("NV seed checksum mismatch"));
++    }
++    Ok(Some(path))
+ }
+ 
+ pub(super) fn publish(directory: &Path, name: &str, stage: &Path) -> io::Result<PathBuf> {
+@@ -245,7 +285,7 @@
+     #[test]
+     fn publication_selects_a_private_data_checksum_pair() {
+         let (store, root, part) = fixture("pair");
+-        fs::write(&part, b"complete synthetic NV").unwrap();
++        crate::store::write_test_fixture(&part, b"complete synthetic NV").unwrap();
+         let data = store.commit(Kind::Efs, "nv_normal.bin").unwrap();
+         assert_eq!(
+             store.read_path(Kind::Efs, "nv_normal.bin"),
+@@ -267,7 +307,7 @@
+     #[test]
+     fn salted_md5_matches_independent_known_answer() {
+         let (_store, root, part) = fixture("known-answer");
+-        fs::write(&part, b"abc").unwrap();
++        crate::store::write_test_fixture(&part, b"abc").unwrap();
+         // Independent reference computed with Python hashlib over the literal
+         // bytes, not by calling this module's checksum implementation.
+         assert_eq!(
+@@ -292,9 +332,9 @@
+         .enumerate()
+         {
+             let (store, root, part) = fixture(&format!("fault-{i}"));
+-            fs::write(&part, b"old state").unwrap();
++            crate::store::write_test_fixture(&part, b"old state").unwrap();
+             store.commit(Kind::Efs, "nv_normal.bin").unwrap();
+-            fs::write(&part, b"new state").unwrap();
++            crate::store::write_test_fixture(&part, b"new state").unwrap();
+             assert!(
+                 publish_with(&root.join("efs"), "nv_normal.bin", &part, |p| {
+                     if p == point {
+@@ -321,10 +361,10 @@
+     #[test]
+     fn broken_published_sidecar_never_falls_back_to_legacy_nv() {
+         let (store, root, part) = fixture("bad-sidecar");
+-        fs::write(root.join("efs/nv_normal.bin"), b"stale legacy").unwrap();
+-        fs::write(&part, b"current").unwrap();
++        crate::store::write_test_fixture(root.join("efs/nv_normal.bin"), b"stale legacy").unwrap();
++        crate::store::write_test_fixture(&part, b"current").unwrap();
+         let data = store.commit(Kind::Efs, "nv_normal.bin").unwrap();
+-        fs::write(
++        crate::store::write_test_fixture(
+             data.parent().unwrap().join("data.md5"),
+             b"00000000000000000000000000000000",
+         )
+@@ -341,9 +381,9 @@
+     #[test]
+     fn altered_published_data_is_rejected() {
+         let (store, root, part) = fixture("altered-data");
+-        fs::write(&part, b"current").unwrap();
++        crate::store::write_test_fixture(&part, b"current").unwrap();
+         let data = store.commit(Kind::Efs, "nv_normal.bin").unwrap();
+-        fs::write(data, b"changed").unwrap();
++        crate::store::write_test_fixture(data, b"changed").unwrap();
+         assert!(store.read_path(Kind::Efs, "nv_normal.bin").is_none());
+         fs::remove_dir_all(root).unwrap();
+     }
+@@ -352,12 +392,12 @@
+     fn pointer_path_traversal_and_symlinks_are_rejected() {
+         let (store, root, _part) = fixture("pointer");
+         let pointer = root.join("efs/nv_normal.bin.current");
+-        fs::write(&pointer, b"../../elsewhere\n").unwrap();
++        crate::store::write_test_fixture(&pointer, b"../../elsewhere\n").unwrap();
+         fs::set_permissions(&pointer, fs::Permissions::from_mode(0o600)).unwrap();
+         assert!(store.read_path(Kind::Efs, "nv_normal.bin").is_none());
+         fs::remove_file(&pointer).unwrap();
+         let outside = root.join("outside");
+-        fs::write(&outside, b"nv_normal.bin.gen-abc\n").unwrap();
++        crate::store::write_test_fixture(&outside, b"nv_normal.bin.gen-abc\n").unwrap();
+         symlink(&outside, &pointer).unwrap();
+         assert!(store.read_path(Kind::Efs, "nv_normal.bin").is_none());
+         fs::remove_dir_all(root).unwrap();
+@@ -366,7 +406,7 @@
+     #[test]
+     fn orphan_generation_is_not_a_published_read_view() {
+         let (store, root, part) = fixture("orphan");
+-        fs::write(&part, b"incomplete").unwrap();
++        crate::store::write_test_fixture(&part, b"incomplete").unwrap();
+         assert!(
+             publish_with(&root.join("efs"), "nv_normal.bin", &part, |p| {
+                 if p == Point::DataCopied {
+@@ -384,7 +424,7 @@
+     #[test]
+     fn a_lingering_stage_fd_cannot_modify_the_published_inode() {
+         let (store, root, part) = fixture("old-fd");
+-        fs::write(&part, b"published").unwrap();
++        crate::store::write_test_fixture(&part, b"published").unwrap();
+         let mut old = OpenOptions::new().write(true).open(&part).unwrap();
+         let data = store.commit(Kind::Efs, "nv_normal.bin").unwrap();
+         old.write_all(b"CORRUPTED").unwrap();
+@@ -396,7 +436,7 @@
+     #[test]
+     fn protected_and_unknown_nv_names_cannot_be_published() {
+         let (store, root, part) = fixture("protected");
+-        fs::write(&part, b"fixture").unwrap();
++        crate::store::write_test_fixture(&part, b"fixture").unwrap();
+         for name in ["nv_protected.bin", "../escape", "unexpected.bin"] {
+             assert!(publish(&root.join("efs"), name, &part).is_err());
+         }
+@@ -411,7 +451,7 @@
+             .enumerate()
+         {
+             let (store, root, part) = fixture(&format!("member-link-{i}"));
+-            fs::write(&part, b"current").unwrap();
++            crate::store::write_test_fixture(&part, b"current").unwrap();
+             let data = store.commit(Kind::Efs, "nv_normal.bin").unwrap();
+             let generation = data.parent().unwrap();
+             let outside = root.join("outside");
+@@ -431,9 +471,9 @@
+     #[test]
+     fn an_empty_stage_cannot_replace_an_existing_generation() {
+         let (store, root, part) = fixture("empty");
+-        fs::write(&part, b"current").unwrap();
++        crate::store::write_test_fixture(&part, b"current").unwrap();
+         let current = store.commit(Kind::Efs, "nv_normal.bin").unwrap();
+-        fs::write(&part, b"").unwrap();
++        crate::store::write_test_fixture(&part, b"").unwrap();
+         assert!(store.commit(Kind::Efs, "nv_normal.bin").is_err());
+         assert_eq!(store.read_path(Kind::Efs, "nv_normal.bin"), Some(current));
+         fs::remove_dir_all(root).unwrap();
+@@ -479,9 +519,9 @@
+         .enumerate()
+         {
+             let (store, root, stage) = fixture(&format!("process-crash-{i}"));
+-            fs::write(&stage, b"old state").unwrap();
++            crate::store::write_test_fixture(&stage, b"old state").unwrap();
+             store.commit(Kind::Efs, "nv_normal.bin").unwrap();
+-            fs::write(&stage, b"new state").unwrap();
++            crate::store::write_test_fixture(&stage, b"new state").unwrap();
+             let executable = std::env::current_exe().unwrap();
+             let mut command = if cfg!(target_arch = "aarch64") {
+                 if let Some(runner) =
+@@ -524,4 +564,74 @@
+             fs::remove_dir_all(root).unwrap();
+         }
+     }
+-}
++    #[test]
++    fn legacy_seed_requires_a_matching_sidecar_and_accepts_uppercase_hex() {
++        let (store, root, _) = fixture("legacy-integrity");
++        let directory = root.join("efs");
++        let path = directory.join("nv_normal.bin");
++        crate::store::write_test_fixture(&path, b"verified seed").unwrap();
++        let sidecar = directory.join("nv_normal.bin.md5");
++        let digest = fs::read_to_string(&sidecar).unwrap();
++        fs::write(&sidecar, digest.to_ascii_uppercase()).unwrap();
++        assert_eq!(
++            read_seed(&directory, "nv_normal.bin").unwrap(),
++            Some(path.clone())
++        );
++        assert_eq!(store.read_path(Kind::Efs, "nv_normal.bin"), Some(path));
++        fs::remove_file(&sidecar).unwrap();
++        assert!(read_seed(&directory, "nv_normal.bin").is_err());
++        assert!(store.read_path(Kind::Efs, "nv_normal.bin").is_none());
++        assert!(store.part(Kind::Efs, "nv_normal.bin").is_err());
++        fs::remove_dir_all(root).unwrap();
++    }
++
++    #[test]
++    fn seed_symlinks_and_empty_identity_files_are_rejected() {
++        for (i, member) in ["nv_normal.bin", "nv_normal.bin.md5"]
++            .into_iter()
++            .enumerate()
++        {
++            let (_store, root, _) = fixture(&format!("seed-symlink-{i}"));
++            let directory = root.join("efs");
++            crate::store::write_test_fixture(directory.join("nv_normal.bin"), b"verified seed")
++                .unwrap();
++            let path = directory.join(member);
++            let outside = root.join("outside");
++            fs::rename(&path, &outside).unwrap();
++            symlink(&outside, &path).unwrap();
++            assert!(read_seed(&directory, "nv_normal.bin").is_err());
++            fs::remove_dir_all(root).unwrap();
++        }
++        let (_store, root, _) = fixture("empty-seed");
++        crate::store::write_test_fixture(root.join("efs/nv_normal.bin"), b"").unwrap();
++        assert!(read_seed(&root.join("efs"), "nv_normal.bin").is_err());
++        fs::remove_dir_all(root).unwrap();
++    }
++
++    #[test]
++    fn an_orphan_seed_sidecar_is_corruption_not_a_missing_seed() {
++        let (store, root, _) = fixture("orphan-seed-sidecar");
++        let directory = root.join("efs");
++        fs::write(
++            directory.join("nv_normal.bin.md5"),
++            b"00000000000000000000000000000000",
++        )
++        .unwrap();
++        assert!(read_seed(&directory, "nv_normal.bin").is_err());
++        assert!(store.read_path(Kind::Efs, "nv_normal.bin").is_none());
++        assert!(store.part(Kind::Efs, "nv_normal.bin").is_err());
++        fs::remove_dir_all(root).unwrap();
++    }
++
++    #[test]
++    fn read_only_preserved_host_seed_check_when_explicitly_requested() {
++        let Some(directory) = std::env::var_os("LUMA_TEST_PRESERVED_NV_DIRECTORY") else {
++            return;
++        };
++        let directory = PathBuf::from(directory);
++        for name in ["nv_normal.bin", "nv_protected.bin"] {
++            let path = read_seed(&directory, name).unwrap().unwrap();
++            assert_eq!(fs::metadata(path).unwrap().len(), 524288);
++        }
++    }
++}
+--- a/crates/exynos-modem/src/rfs.rs
++++ b/crates/exynos-modem/src/rfs.rs
+@@ -386,6 +386,10 @@
+                 }
+                 self.files.get_mut(&fid).unwrap().token = token;
+                 if iotype == IO_READ {
++                    if self.files[&fid].nv_file && self.files[&fid].fd.is_none() {
++                        self.op_error(token, fid, RFS_STATUS_INVALID_TRANSFER);
++                        return;
++                    }
+                     let e = self.files.get_mut(&fid).unwrap();
+                     e.roff = off as i64;
+                     e.rremain = iolen as i64;
+@@ -411,6 +415,10 @@
+                         e.wfd = None;
+                         e.wremain = 0;
+                         self.op_error(token, fid, RFS_STATUS_INVALID_TRANSFER);
++                        return;
++                    }
++                    if source_size == 0 || self.files[&fid].fd.is_none() {
++                        self.op_error(token, fid, RFS_STATUS_WRITE_FAILED);
+                         return;
+                     }
+                     let part = nv_name(fid).and_then(|n| self.store.part(Kind::Efs, n).ok());
+@@ -685,7 +693,7 @@
+         std::fs::create_dir_all(root.join("carrierconfig")).unwrap();
+         let path = root.join("carrierconfig/fixture");
+         let contents: Vec<u8> = (0..CHUNK + 37).map(|i| (i % 251) as u8).collect();
+-        std::fs::write(&path, &contents).unwrap();
++        crate::store::write_test_fixture(&path, &contents).unwrap();
+         let (local, mut peer) = UnixStream::pair().unwrap();
+         peer.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
+         let dev: OwnedFd = local.into();
+@@ -763,6 +771,8 @@
+     fn a_write_is_committed_without_any_close() {
+         let root = std::env::temp_dir().join(format!("rfstest{}", std::process::id()));
+         let _ = std::fs::remove_dir_all(&root);
++        std::fs::create_dir_all(root.join("efs")).unwrap();
++        crate::store::write_test_fixture(root.join("efs/nv_normal.bin"), b"old!").unwrap();
+         let dev = std::fs::File::create(root.with_extension("dev")).unwrap();
+         let mut rfs = Rfs::new(dev, Store::new(root.clone()), false);
+ 
+@@ -830,7 +840,7 @@
+     #[test]
+     fn unavailable_write_storage_returns_failure_without_success_ack() {
+         let root = std::env::temp_dir().join(format!("rfs-no-storage-{}", std::process::id()));
+-        std::fs::write(&root, b"blocker").unwrap();
++        crate::store::write_test_fixture(&root, b"blocker").unwrap();
+         let device = root.with_extension("dev");
+         let mut rfs = Rfs::new(
+             File::create(&device).unwrap(),
+@@ -850,7 +860,8 @@
+     #[test]
+     fn commit_failure_returns_failure_without_success_ack() {
+         let root = std::env::temp_dir().join(format!("rfs-commit-failure-{}", std::process::id()));
+-        std::fs::create_dir_all(root.join("efs/nv_normal.bin")).unwrap();
++        std::fs::create_dir_all(root.join("efs")).unwrap();
++        crate::store::write_test_fixture(root.join("efs/nv_normal.bin"), b"original").unwrap();
+         let device = root.with_extension("dev");
+         let mut rfs = Rfs::new(
+             File::create(&device).unwrap(),
+@@ -858,6 +869,8 @@
+             false,
+         );
+         rfs.handle(&write_request(7, 4));
++        std::fs::rename(root.join("efs/nv_normal.bin"), root.join("preserved-seed")).unwrap();
++        std::fs::create_dir(root.join("efs/nv_normal.bin")).unwrap();
+         let request_bytes = std::fs::metadata(&device).unwrap().len() as usize;
+         rfs.handle(&write_chunk(7, 4, b"NVNV"));
+         assert_eq!(
+@@ -865,6 +878,10 @@
+             error_response(7, RFS_STATUS_WRITE_FAILED)
+         );
+         assert!(root.join("efs/nv_normal.bin").is_dir());
++        assert_eq!(
++            std::fs::read(root.join("preserved-seed")).unwrap(),
++            b"original"
++        );
+         std::fs::remove_dir_all(root).unwrap();
+         std::fs::remove_file(device).unwrap();
+     }
+@@ -879,7 +896,7 @@
+             let root =
+                 std::env::temp_dir().join(format!("rfs-invalid-{}-{}", std::process::id(), case));
+             std::fs::create_dir_all(root.join("efs")).unwrap();
+-            std::fs::write(root.join("efs/nv_normal.bin"), b"original").unwrap();
++            crate::store::write_test_fixture(root.join("efs/nv_normal.bin"), b"original").unwrap();
+             let device = root.with_extension("dev");
+             let mut rfs = Rfs::new(
+                 File::create(&device).unwrap(),
+@@ -908,8 +925,8 @@
+         let _ = std::fs::remove_dir_all(&root);
+         let allowed = root.join("allowed");
+         std::fs::create_dir_all(allowed.join("nested")).unwrap();
+-        std::fs::write(allowed.join("nested/config"), b"permitted").unwrap();
+-        std::fs::write(root.join("secret"), b"outside").unwrap();
++        crate::store::write_test_fixture(allowed.join("nested/config"), b"permitted").unwrap();
++        crate::store::write_test_fixture(root.join("secret"), b"outside").unwrap();
+         symlink(root.join("secret"), allowed.join("link")).unwrap();
+         symlink(&root, allowed.join("escape")).unwrap();
+         let fifo = CString::new(allowed.join("fifo").as_os_str().as_bytes()).unwrap();
+@@ -946,7 +963,7 @@
+         let root = std::env::temp_dir().join(format!("rfs-fallback-{}", std::process::id()));
+         let _ = std::fs::remove_dir_all(&root);
+         std::fs::create_dir_all(root.join("fallback")).unwrap();
+-        std::fs::write(root.join("fallback/config"), b"fallback").unwrap();
++        crate::store::write_test_fixture(root.join("fallback/config"), b"fallback").unwrap();
+         let roots = vec![root.join("missing"), root.join("fallback")];
+         let mut file = open_path("/vendor/firmware/carrierconfig/config", &roots).unwrap();
+         let mut text = String::new();
+@@ -959,7 +976,7 @@
+         let root = std::env::temp_dir().join(format!("rfs-read-refresh-{}", std::process::id()));
+         std::fs::create_dir_all(root.join("efs")).unwrap();
+         let path = root.join("efs/nv_normal.bin");
+-        std::fs::write(&path, b"original factory bytes").unwrap();
++        crate::store::write_test_fixture(&path, b"original factory bytes").unwrap();
+         let device = root.with_extension("dev");
+         let mut rfs = Rfs::new(
+             File::create(&device).unwrap(),
+@@ -1017,7 +1034,7 @@
+         let _ = std::fs::remove_dir_all(&root);
+         std::fs::create_dir_all(root.join("efs")).unwrap();
+         let path = root.join("efs/nv_normal.bin");
+-        std::fs::write(&path, b"abcdefghijkl").unwrap();
++        crate::store::write_test_fixture(&path, b"abcdefghijkl").unwrap();
+         let device = root.with_extension("dev");
+         let mut rfs = Rfs::new(
+             File::create(&device).unwrap(),
+@@ -1070,7 +1087,7 @@
+             let _ = std::fs::remove_dir_all(&root);
+             std::fs::create_dir_all(root.join("efs")).unwrap();
+             let path = root.join("efs/nv_normal.bin");
+-            std::fs::write(&path, b"original").unwrap();
++            crate::store::write_test_fixture(&path, b"original").unwrap();
+             let device = root.with_extension("dev");
+             let mut rfs = Rfs::new(
+                 File::create(&device).unwrap(),
+@@ -1095,7 +1112,7 @@
+         let _ = std::fs::remove_dir_all(&root);
+         std::fs::create_dir_all(root.join("efs")).unwrap();
+         let target = root.join("target");
+-        std::fs::write(&target, b"private").unwrap();
++        crate::store::write_test_fixture(&target, b"private").unwrap();
+         std::os::unix::fs::symlink(&target, root.join("efs/nv_normal.bin.part")).unwrap();
+         let device = root.with_extension("dev");
+         let mut rfs = Rfs::new(
+@@ -1119,7 +1136,7 @@
+         let root = std::env::temp_dir().join(format!("rfs-readonly-handle-{}", std::process::id()));
+         let _ = std::fs::remove_dir_all(&root);
+         std::fs::create_dir_all(root.join("carrier")).unwrap();
+-        std::fs::write(root.join("carrier/config"), b"carrier data").unwrap();
++        crate::store::write_test_fixture(root.join("carrier/config"), b"carrier data").unwrap();
+         let device = root.with_extension("dev");
+         let mut rfs = Rfs::new(
+             File::create(&device).unwrap(),
+@@ -1192,7 +1209,7 @@
+         let _ = std::fs::remove_dir_all(&root);
+         std::fs::create_dir_all(root.join("efs")).unwrap();
+         let path = root.join("efs/nv_protected.bin");
+-        std::fs::write(&path, b"protected original").unwrap();
++        crate::store::write_test_fixture(&path, b"protected original").unwrap();
+         let device = root.with_extension("dev");
+         let mut rfs = Rfs::new(
+             File::create(&device).unwrap(),
+@@ -1292,7 +1309,7 @@
+             std::env::temp_dir().join(format!("rfs-reply-failure-{}-{}", std::process::id(), tag));
+         std::fs::create_dir_all(&root).unwrap();
+         let transport = root.join("read-only-transport");
+-        std::fs::write(&transport, b"fixture").unwrap();
++        crate::store::write_test_fixture(&transport, b"fixture").unwrap();
+         (
+             Rfs::new(
+                 File::open(transport).unwrap(),
+@@ -1327,7 +1344,7 @@
+     fn a_failed_read_reply_does_not_advance_the_protocol_cursor() {
+         let (mut rfs, root) = failed_transport_fixture("read-cursor");
+         let source = root.join("source");
+-        std::fs::write(&source, b"original").unwrap();
++        crate::store::write_test_fixture(&source, b"original").unwrap();
+         rfs.files.insert(
+             40,
+             Fent {
+@@ -1352,7 +1369,7 @@
+         let directory = root.join("efs");
+         std::fs::create_dir_all(&directory).unwrap();
+         let original = directory.join("nv_normal.bin");
+-        std::fs::write(&original, b"original").unwrap();
++        crate::store::write_test_fixture(&original, b"original").unwrap();
+         let request = [1u32, 0, 4, IO_WRITE]
+             .into_iter()
+             .flat_map(u32::to_le_bytes)
+@@ -1399,7 +1416,7 @@
+         let root = std::env::temp_dir().join(format!("rfs-reply-lost-ack-{}", std::process::id()));
+         std::fs::create_dir_all(root.join("efs")).unwrap();
+         let nv = root.join("efs/nv_normal.bin");
+-        std::fs::write(&nv, b"original").unwrap();
++        crate::store::write_test_fixture(&nv, b"original").unwrap();
+         let transport = root.join("transport");
+         let dev = OpenOptions::new()
+             .read(true)
+@@ -1439,4 +1456,81 @@
+         drop(rfs);
+         std::fs::remove_dir_all(root).unwrap();
+     }
++    #[test]
++    fn absent_nv_seed_cannot_be_read_as_empty_or_bootstrap_a_write() {
++        for kind in [IO_READ, IO_WRITE] {
++            let root = std::env::temp_dir()
++                .join(format!("rfs-missing-seed-{}-{kind}", std::process::id()));
++            let device = root.with_extension("dev");
++            let mut rfs = Rfs::new(
++                File::create(&device).unwrap(),
++                Store::new(root.clone()),
++                false,
++            );
++            let body = [1u32, 0, 4, kind]
++                .into_iter()
++                .flat_map(u32::to_le_bytes)
++                .collect::<Vec<_>>();
++            rfs.handle(&frame(RFS_IO_REQUEST, 7, &body));
++            assert_eq!(
++                std::fs::read(&device).unwrap(),
++                error_response(
++                    7,
++                    if kind == IO_WRITE {
++                        RFS_STATUS_WRITE_FAILED
++                    } else {
++                        RFS_STATUS_INVALID_TRANSFER
++                    }
++                )
++            );
++            assert!(
++                !root.exists(),
++                "missing identity seed must not create writable NV state"
++            );
++            drop(rfs);
++            std::fs::remove_file(device).unwrap();
++        }
++    }
++
++    #[test]
++    fn a_bad_seed_checksum_blocks_both_nv_directions() {
++        let root = std::env::temp_dir().join(format!("rfs-bad-seed-{}", std::process::id()));
++        std::fs::create_dir_all(root.join("efs")).unwrap();
++        crate::store::write_test_fixture(root.join("efs/nv_normal.bin"), b"original").unwrap();
++        std::fs::write(
++            root.join("efs/nv_normal.bin.md5"),
++            b"00000000000000000000000000000000",
++        )
++        .unwrap();
++        for kind in [IO_READ, IO_WRITE] {
++            let device = root.join(format!("transport-{kind}"));
++            let mut rfs = Rfs::new(
++                File::create(&device).unwrap(),
++                Store::new(root.clone()),
++                false,
++            );
++            let body = [1u32, 0, 4, kind]
++                .into_iter()
++                .flat_map(u32::to_le_bytes)
++                .collect::<Vec<_>>();
++            rfs.handle(&frame(RFS_IO_REQUEST, 7, &body));
++            assert_eq!(
++                std::fs::read(device).unwrap(),
++                error_response(
++                    7,
++                    if kind == IO_WRITE {
++                        RFS_STATUS_WRITE_FAILED
++                    } else {
++                        RFS_STATUS_INVALID_TRANSFER
++                    }
++                )
++            );
++        }
++        assert_eq!(
++            std::fs::read(root.join("efs/nv_normal.bin")).unwrap(),
++            b"original"
++        );
++        assert!(!root.join("efs/nv_normal.bin.part").exists());
++        std::fs::remove_dir_all(root).unwrap();
++    }
+ }

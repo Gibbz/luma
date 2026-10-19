@@ -1,0 +1,400 @@
+#!/bin/busybox sh
+# SPDX-License-Identifier: Apache-2.0
+
+# Native Tokay RAM-root bootstrap. Supply validated local input digests using
+# render-tokay-ram-init.py before packaging. Firmware/calibration and rootfs
+# are externally supplied; no unit data or lab credentials belong in source.
+
+PATH=/bin
+export PATH
+umask 077
+
+bb=/bin/busybox
+report=/run/luma-pixel9-ufs-report.txt
+gadget=/sys/kernel/config/usb_gadget/luma_pixel9_diagnostic
+device_address=192.168.77.1
+host_address=192.168.77.2
+snapshot_delay=15
+
+$bb mkdir -p /dev
+$bb mount -t devtmpfs devtmpfs /dev
+$bb mkdir -p /dev/pts /proc /sys /run /sys/kernel/config /sys/kernel/debug
+$bb mount -t devpts devpts /dev/pts 2>/dev/null || true
+$bb mount -t proc proc /proc 2>/dev/null || true
+$bb mount -t sysfs sysfs /sys 2>/dev/null || true
+$bb mount -t tmpfs -o mode=0700,nosuid,nodev tmpfs /run 2>/dev/null || true
+$bb mount -t configfs configfs /sys/kernel/config 2>/dev/null || true
+$bb mount -t debugfs debugfs /sys/kernel/debug 2>/dev/null || true
+
+exec </dev/null >/dev/kmsg 2>&1
+
+read_one() {
+	[ -r "$1" ] || return 0
+	$bb tr -d '\000\r\n' <"$1"
+}
+
+setup_composite_gadget() {
+	[ -d /sys/kernel/config/usb_gadget ] || return 1
+	$bb mkdir -p "$gadget" || return 1
+	echo 0x1d6b >"$gadget/idVendor" || return 1
+	echo 0x0105 >"$gadget/idProduct" || return 1
+	echo 0xef >"$gadget/bDeviceClass" || return 1
+	echo 0x02 >"$gadget/bDeviceSubClass" || return 1
+	echo 0x01 >"$gadget/bDeviceProtocol" || return 1
+	$bb mkdir -p "$gadget/strings/0x409" "$gadget/configs/c.1/strings/0x409" || return 1
+	echo 'luma-pixel9-ufs-v3' >"$gadget/strings/0x409/serialnumber" || return 1
+	echo 'Luma Project' >"$gadget/strings/0x409/manufacturer" || return 1
+	echo 'Pixel 9 volatile UFS diagnostic v3' >"$gadget/strings/0x409/product" || return 1
+	echo 'Delayed read-only UFS report over ECM' >"$gadget/configs/c.1/strings/0x409/configuration" || return 1
+	echo 250 >"$gadget/configs/c.1/MaxPower" || return 1
+	$bb mkdir -p "$gadget/functions/acm.usb0" "$gadget/functions/ecm.usb0" || return 1
+	echo '02:4c:55:4d:41:01' >"$gadget/functions/ecm.usb0/dev_addr" || return 1
+	echo '02:4c:55:4d:41:02' >"$gadget/functions/ecm.usb0/host_addr" || return 1
+	$bb ln -s "$gadget/functions/acm.usb0" "$gadget/configs/c.1/acm.usb0" || return 1
+	$bb ln -s "$gadget/functions/ecm.usb0" "$gadget/configs/c.1/ecm.usb0" || return 1
+	for node in /sys/class/udc/*; do
+		[ -e "$node" ] || continue
+		echo "${node##*/}" >"$gadget/UDC" || return 1
+		return 0
+	done
+	return 1
+}
+
+make_report() {
+	{
+		echo 'LUMA_PIXEL9_DIAGNOSTIC_REPORT_VERSION=3'
+		echo 'SCOPE=volatile-allowlisted-native-linux-ufs-diagnostic'
+		echo 'PERSISTENT_FILESYSTEMS_MOUNTED=false'
+		echo 'MODULES_AUTOLOADED=false'
+		echo 'INTERACTIVE_SHELL_EXPOSED=false'
+		echo 'COMMAND_ENDPOINT_EXPOSED=false'
+		echo 'REPORT_TRANSPORTS=usb-ecm-http'
+		echo "SNAPSHOT_DELAY_SECONDS=$snapshot_delay"
+		echo "KERNEL_RELEASE=$($bb uname -r)"
+		echo "MODEL=$(read_one /sys/firmware/devicetree/base/model)"
+		if [ -r /sys/firmware/devicetree/base/compatible ]; then
+			echo 'COMPATIBLE_BEGIN'
+			$bb tr '\000' '\n' </sys/firmware/devicetree/base/compatible
+			echo 'COMPATIBLE_END'
+		fi
+
+		echo 'BLOCK_DEVICES_BEGIN'
+		for node in /sys/class/block/*; do
+			[ -e "$node" ] || continue
+			name=${node##*/}
+			size=$(read_one "$node/size")
+			readonly=$(read_one "$node/ro")
+			echo "$name sectors=$size read_only=$readonly"
+		done
+		echo 'BLOCK_DEVICES_END'
+
+		echo 'UFS_PLATFORM_DEVICES_BEGIN'
+		for node in /sys/bus/platform/devices/13200000.ufs /sys/bus/platform/devices/13204000.phy; do
+			[ -e "$node" ] || continue
+			name=${node##*/}
+			driver=unbound
+			if [ -L "$node/driver" ]; then
+				driver=$($bb readlink "$node/driver")
+				driver=${driver##*/}
+			fi
+			modalias=$(read_one "$node/modalias")
+			echo "$name driver=$driver modalias=$modalias"
+		done
+		echo 'UFS_PLATFORM_DEVICES_END'
+
+		echo 'SCSI_HOSTS_BEGIN'
+		for node in /sys/class/scsi_host/host*; do
+			[ -e "$node" ] || continue
+			name=${node##*/}
+			proc_name=$(read_one "$node/proc_name")
+			state=$(read_one "$node/state")
+			echo "$name proc_name=$proc_name state=$state"
+		done
+		echo 'SCSI_HOSTS_END'
+
+		echo 'UFS_DEFERRED_PROBES_BEGIN'
+		if [ -r /sys/kernel/debug/devices_deferred ]; then
+			$bb grep -Ei 'ufs|13200000|13204000|scsi|phy' /sys/kernel/debug/devices_deferred 2>/dev/null || true
+		fi
+		echo 'UFS_DEFERRED_PROBES_END'
+
+		echo 'UFS_KERNEL_LOG_BEGIN'
+		$bb dmesg 2>/dev/null | $bb grep -Ei 'ufs|ufshc|13200000|13204000|scsi|defer' || true
+		echo 'UFS_KERNEL_LOG_END'
+
+		echo 'POWER_SUPPLIES_BEGIN'
+		for node in /sys/class/power_supply/*; do
+			[ -e "$node" ] || continue
+			name=${node##*/}
+			type=$(read_one "$node/type")
+			status=$(read_one "$node/status")
+			capacity=$(read_one "$node/capacity")
+			echo "$name type=$type status=$status capacity=$capacity"
+		done
+		echo 'POWER_SUPPLIES_END'
+
+		echo 'DRM_CONNECTORS_BEGIN'
+		for node in /sys/class/drm/card*-*; do
+			[ -e "$node" ] || continue
+			name=${node##*/}
+			status=$(read_one "$node/status")
+			echo "$name status=$status"
+		done
+		echo 'DRM_CONNECTORS_END'
+		echo 'FULL_KERNEL_LOG_BEGIN'
+		$bb dmesg
+		echo 'FULL_KERNEL_LOG_END'
+
+		echo 'INPUT_DEVICES_BEGIN'
+		$bb cat /proc/bus/input/devices
+		echo 'INPUT_DEVICES_END'
+		echo 'REPORT_END=true'
+	} >"$report"
+	$bb chmod 0444 "$report"
+}
+
+publish_report() {
+ # Single foreground writer; replace the read-only HTTP report atomically.
+ next_report=/run/www/.luma-pixel9-report.next
+ $bb rm -f "$next_report" || return 1
+ $bb cp "$report" "$next_report" || return 1
+ $bb chmod 0444 "$next_report" || return 1
+ $bb mv -f "$next_report" /run/www/luma-pixel9-report.txt || return 1
+}
+
+setup_report_network() {
+	interface=$(read_one "$gadget/functions/ecm.usb0/ifname")
+	if [ ! -e "/sys/class/net/$interface" ]; then
+		for netdev in /sys/class/net/*; do
+			if [ "$(read_one "$netdev/address")" = '02:4c:55:4d:41:01' ]; then
+				interface=${netdev##*/}
+			fi
+		done
+	fi
+	[ -e "/sys/class/net/$interface" ] || return 1
+	$bb ifconfig "$interface" "$device_address" netmask 255.255.255.0 up || return 1
+	$bb mkdir -p /run/www
+	publish_report || return 1
+	$bb chmod 0555 /run/www
+	$bb chmod 0444 /run/www/luma-pixel9-report.txt
+	{
+		echo "start $host_address"
+		echo "end $host_address"
+		echo "interface $interface"
+		echo 'option subnet 255.255.255.0'
+		echo 'option lease 600'
+		echo 'lease_file /run/udhcpd.leases'
+		echo 'pidfile /run/udhcpd.pid'
+	} >/run/udhcpd.conf
+	$bb touch /run/udhcpd.leases
+	$bb udhcpd -f /run/udhcpd.conf >/dev/console 2>&1 &
+	$bb httpd -f -p "$device_address:80" -h /run/www >/dev/console 2>&1 &
+	return 0
+}
+
+set -eu
+stage() {
+ echo "$1" >/run/www/state.txt
+ echo "LUMA_RAM_BOOT_STAGE=$1"
+}
+setup_composite_gadget
+$bb mkdir -p /run/www
+: >"$report"
+setup_report_network
+stage early-init-network-ready
+# Read only the prior RAM-backed console, never a stock filesystem.
+$bb mkdir -p /sys/fs/pstore
+if $bb mount -t pstore -o ro pstore /sys/fs/pstore 2>/dev/null; then
+ for previous in /sys/fs/pstore/console-ramoops*; do
+  [ -f "$previous" ] || continue
+  $bb cat "$previous" >>/run/www/previous-console.txt
+ done
+ $bb umount /sys/fs/pstore
+fi
+(
+ while true; do
+  $bb dmesg >/run/www/dmesg.txt
+  # The foreground publishes the immutable report; do not race its copy.
+  {
+   $bb cat /run/www/state.txt 2>/dev/null
+   $bb cat "$report"
+   $bb dmesg | $bb tail -60
+  } >/run/serial-report.txt
+  $bb timeout 2 "$bb" sh -c '/bin/busybox cat /run/serial-report.txt > /dev/ttyGS0' 2>/dev/null || true
+  $bb sleep 2
+ done
+) &
+reporter_pid=$!
+trap 'stage EARLY_INIT_FAILED; while true; do $bb sleep 30; done' EXIT
+$bb sleep 15
+make_report
+publish_report
+stage read-only-storage-guard
+# Set both whole UFS disks and their partitions read-only before userspace.
+for node in /sys/class/block/sd*; do
+ [ -e "$node" ] || continue
+ dev=/dev/${node##*/}
+ $bb blockdev --setro "$dev"
+ [ "$($bb blockdev --getro "$dev")" = 1 ]
+done
+stage stock-boot-read-check
+found=0
+for node in /sys/class/block/*; do
+ [ -r "$node/uevent" ] || continue
+ if $bb grep -qx 'PARTNAME=boot_a' "$node/uevent"; then
+  actual=$($bb sha256sum "/dev/${node##*/}")
+  [ "${actual%% *}" = '@SHA256_0@' ]
+  echo "BOOT_A_SHA256=${actual%% *}" >/run/www/storage-proof.txt
+  found=1
+ fi
+done
+[ "$found" = 1 ]
+stage downloading-luma-ram-root
+attempt=0
+until $bb wget -q -T 15 -O /run/luma-root.tar.gz http://192.168.77.2:8000/luma-tokay-root.tar.gz; do
+ attempt=$((attempt+1))
+ [ "$attempt" -lt 30 ] || { stage root-download-failed; exit 1; }
+ $bb sleep 2
+done
+stage verifying-root-archive
+actual=$($bb sha256sum /run/luma-root.tar.gz)
+[ "${actual%% *}" = '@SHA256_1@' ]
+stage extracting-ram-root
+$bb mkdir -p /newroot
+$bb mount -t tmpfs -o mode=0755,size=75% tmpfs /newroot
+$bb tar -xzf /run/luma-root.tar.gz -C /newroot
+# Archive root came from a host staging directory; fix its ownership before PID 1.
+$bb chown 0:0 /newroot
+$bb chmod 0755 /newroot
+$bb rm /run/luma-root.tar.gz
+stage installing-exact-kernel-modules
+$bb wget -q -T 30 -O /run/modules.tar.gz http://192.168.77.2:8000/modules-native-rfs-wire.tar.gz
+actual=$($bb sha256sum /run/modules.tar.gz)
+[ "${actual%% *}" = '@SHA256_2@' ]
+[ -L /newroot/lib ]
+[ "$($bb readlink /newroot/lib)" = usr/lib ]
+$bb tar -xzf /run/modules.tar.gz -C /newroot
+[ -L /newroot/lib ]
+[ -e /newroot/lib/ld-linux-aarch64.so.1 ]
+$bb rm /run/modules.tar.gz
+# Remove residual FP6-only configuration from this shared userspace snapshot.
+$bb rm -f /newroot/etc/luma-fp6-firmware-manifest.sha256 /newroot/etc/luma/fp6-cellular-link.conf
+# The runtime hierarchy must remain traversable by D-Bus and other services.
+$bb chmod 0755 /run
+for unit in tqftpserv.service greenboot-healthcheck.service greenboot-set-rollback-trigger.service; do
+ $bb ln -sfn /dev/null "/newroot/etc/systemd/system/$unit"
+done
+# Keep kernel messages observable after switch_root and driver loading.
+$bb mkdir -p /newroot/etc/systemd/system/multi-user.target.wants
+$bb cat >/newroot/etc/systemd/system/tokay-serial-log.service <<'SERIALUNIT'
+[Unit]
+Description=Tokay lab kernel log over USB serial
+After=systemd-udev-trigger.service
+ConditionPathExists=/dev/ttyGS0
+[Service]
+ExecStart=/usr/bin/dmesg --follow --raw
+StandardOutput=append:/dev/ttyGS0
+StandardError=journal
+Restart=always
+RestartSec=2
+[Install]
+WantedBy=multi-user.target
+SERIALUNIT
+$bb ln -sfn ../tokay-serial-log.service /newroot/etc/systemd/system/multi-user.target.wants/tokay-serial-log.service
+
+stage installing-verified-gpu-userspace
+$bb wget -q -T 30 -O /run/tokay-mesa.tar.gz http://192.168.77.2:8000/tokay-mesa-v11.tar.gz
+actual=$($bb sha256sum /run/tokay-mesa.tar.gz)
+[ "${actual%% *}" = '@SHA256_3@' ]
+$bb tar -xzf /run/tokay-mesa.tar.gz -C /newroot
+$bb rm /run/tokay-mesa.tar.gz
+$bb wget -q -T 30 -O /run/tokay-gpu-firmware.bin http://192.168.77.2:8000/mali_csffw-legacy-r56p0.bin
+actual=$($bb sha256sum /run/tokay-gpu-firmware.bin)
+[ "${actual%% *}" = '@SHA256_4@' ]
+$bb mkdir -p /newroot/usr/lib/firmware/arm/mali/arch11.8
+$bb mv /run/tokay-gpu-firmware.bin /newroot/usr/lib/firmware/arm/mali/arch11.8/mali_csffw.bin
+
+# Volatile Tokay lab profile: shared Luma session, native display driver.
+# Every physical block device has already been made read-only above.
+$bb mkdir -p /newroot/etc/luma/tokay-lab /newroot/etc/systemd/system/greetd.service.d
+$bb cat >/newroot/etc/luma/tokay-lab/display-start <<'DISPLAYSTART'
+#!/bin/sh
+set -eu
+grep -qx 'LUMA_TOKAY_RAM_BOOT=1' /run/luma/ram-boot-proof.txt
+# Touch enabled only after its separate device test.
+/usr/sbin/modprobe exynosdrm dsc_full_pic_width=1
+exec /usr/sbin/modprobe panthor
+DISPLAYSTART
+$bb chmod 0755 /newroot/etc/luma/tokay-lab/display-start
+$bb cat >/newroot/etc/systemd/system/luma-tokay-lab-display.service <<'DISPLAYUNIT'
+[Unit]
+Description=Tokay volatile native display bring-up
+Before=greetd.service
+[Service]
+Type=oneshot
+ExecStart=/etc/luma/tokay-lab/display-start
+RemainAfterExit=yes
+DISPLAYUNIT
+$bb cat >/newroot/etc/systemd/system/greetd.service.d/90-tokay-lab.conf <<'GREETDUNIT'
+[Unit]
+Requires=luma-tokay-lab-display.service
+After=luma-tokay-lab-display.service
+GREETDUNIT
+# Pass software-renderer selection into greetd's sanitized user environment.
+$bb sed -i 's|command = "/usr/libexec/luma-phosh-session"|command = "/usr/bin/env LD_LIBRARY_PATH=/opt/luma/tokay-mesa/lib64 LIBGL_DRIVERS_PATH=/opt/luma/tokay-mesa/lib64/dri GDK_GL=gles WLR_RENDERER=gles2 WLR_RENDER_DRM_DEVICE=/dev/dri/renderD129 WLR_DRM_DEVICES=/dev/dri/card0 /usr/libexec/luma-phosh-session"|' /newroot/etc/greetd/config.toml
+$bb rm -f /newroot/etc/systemd/system/greetd.service
+$bb ln -sfn /usr/lib/systemd/system/greetd.service /newroot/etc/systemd/system/multi-user.target.wants/greetd.service
+
+
+stage installing-native-radio-profile
+$bb wget -q -T 30 -O /run/tokay-radio-firmware.tar.gz http://192.168.77.2:8000/tokay-radio-firmware.tar.gz
+actual=$($bb sha256sum /run/tokay-radio-firmware.tar.gz)
+[ "${actual%% *}" = "@SHA256_5@" ]
+$bb tar -xzf /run/tokay-radio-firmware.tar.gz -C /newroot
+$bb rm /run/tokay-radio-firmware.tar.gz
+$bb wget -q -T 30 -O /run/tokay-native-radio-profile.tar.gz http://192.168.77.2:8000/tokay-native-radio-profile.tar.gz
+actual=$($bb sha256sum /run/tokay-native-radio-profile.tar.gz)
+[ "${actual%% *}" = "@SHA256_6@" ]
+$bb tar -xzf /run/tokay-native-radio-profile.tar.gz -C /newroot
+$bb rm /run/tokay-native-radio-profile.tar.gz
+
+
+stage installing-native-capture-profile
+$bb wget -q -T 30 -O /run/tokay-speaker-protection.tar http://192.168.77.2:8000/tokay-speaker-protection.tar
+actual=$($bb sha256sum /run/tokay-speaker-protection.tar)
+[ "${actual%% *}" = "@SHA256_7@" ]
+$bb tar -xf /run/tokay-speaker-protection.tar -C /newroot
+$bb rm /run/tokay-speaker-protection.tar
+$bb wget -q -T 30 -O /run/tokay-capture-profile-native-rfs-wire.tar.gz http://192.168.77.2:8000/tokay-capture-profile-native-rfs-wire.tar.gz
+actual=$($bb sha256sum /run/tokay-capture-profile-native-rfs-wire.tar.gz)
+[ "${actual%% *}" = "@SHA256_8@" ]
+$bb tar -xzf /run/tokay-capture-profile-native-rfs-wire.tar.gz -C /newroot
+$bb rm /run/tokay-capture-profile-native-rfs-wire.tar.gz
+
+stage installing-tokay-panel-geometry
+$bb wget -q -T 30 -O /run/tokay-device-data.tar http://192.168.77.2:8000/tokay-device-data-native-rfs-wire.tar
+actual=$($bb sha256sum /run/tokay-device-data.tar)
+[ "${actual%% *}" = '@SHA256_9@' ]
+$bb tar -xf /run/tokay-device-data.tar -C /newroot
+$bb rm /run/tokay-device-data.tar
+$bb grep -q 'command = "/usr/bin/env LD_LIBRARY_PATH=' /newroot/etc/greetd/config.toml
+$bb sed -i 's|command = "/usr/bin/env LD_LIBRARY_PATH=|command = "/usr/bin/env G_RESOURCE_OVERLAYS=/mobi/phosh/gmobile/devices/display-panels=/etc/luma/device-data/gmobile/display-panels LD_LIBRARY_PATH=|' /newroot/etc/greetd/config.toml
+
+stage starting-native-luma-systemd
+# Leave a clear audit record in the volatile root.
+$bb mkdir -p /run/luma
+{
+ echo LUMA_TOKAY_RAM_BOOT=1
+ echo PHONE_BLOCK_DEVICES_READ_ONLY=1
+ echo PERSISTENT_FILESYSTEMS_MOUNTED=0
+ echo ROOT_ARCHIVE_SHA256=@SHA256_1@
+ $bb uname -a
+} >/run/luma/ram-boot-proof.txt
+# The report/network helpers belong to early init; NetworkManager owns USB
+# after switch_root and the key-authenticated SSH service replaces HTTP.
+$bb kill "$reporter_pid" 2>/dev/null || true
+$bb killall httpd udhcpd 2>/dev/null || true
+for fs in dev proc sys run; do
+ $bb mount --move "/$fs" "/newroot/$fs"
+done
+exec $bb switch_root /newroot /sbin/init

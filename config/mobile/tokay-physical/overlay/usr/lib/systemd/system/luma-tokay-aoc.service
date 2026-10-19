@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: Apache-2.0
+[Unit]
+Description=Tokay native AoC foundation
+After=systemd-udev-trigger.service
+ConditionPathExists=/run/luma/ram-boot-proof.txt
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/luma-tokay-aoc-start
+RemainAfterExit=yes
+TimeoutStartSec=40
+[Install]
+WantedBy=multi-user.target

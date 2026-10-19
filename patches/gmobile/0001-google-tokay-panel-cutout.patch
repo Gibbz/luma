@@ -1,0 +1,34 @@
+diff --git a/data/gmobile.gresources.xml b/data/gmobile.gresources.xml
+index 135caa1..23f8de8 100644
+--- a/data/gmobile.gresources.xml
++++ b/data/gmobile.gresources.xml
+@@ -17,6 +17,7 @@
+     <file preprocess="json-stripblanks">devices/display-panels/nothing,spacewar.json</file>
+     <file preprocess="json-stripblanks">devices/display-panels/google,gs101-bluejay.json</file>
+     <file preprocess="json-stripblanks">devices/display-panels/google,gs101-oriole.json</file>
++    <file preprocess="json-stripblanks">devices/display-panels/google,tokay.json</file>
+     <file preprocess="json-stripblanks">devices/display-panels/google,gs101-raven.json</file>
+     <file preprocess="json-stripblanks">devices/display-panels/oneplus,enchilada.json</file>
+     <file preprocess="json-stripblanks">devices/display-panels/oneplus,fajita.json</file>
+--- /dev/null
++++ b/data/devices/display-panels/google,tokay.json
+@@ -0,0 +1,19 @@
++{
++  "name": "Google Pixel 9",
++  "x-res": 1080,
++  "y-res": 2424,
++  "width": 65,
++  "height": 146,
++  "corner-radii": [
++    132,
++    132,
++    132,
++    132
++  ],
++  "cutouts": [
++    {
++      "name": "camera",
++      "path": "M 581.5,86.5 a 42,42 0 0 0 -84,0 a 42,42 0 0 0 84,0 Z"
++    }
++  ]
++}
