@@ -189,7 +189,7 @@ class Daemon:
         if not model_id:
             return None
         try:
-            return cloud.find(model_id, cloud.catalogue())
+            return cloud.find(model_id, cloud.catalogue(offline=offline))
         except (cloud.CloudError, OSError, ValueError):
             if offline:
                 return None

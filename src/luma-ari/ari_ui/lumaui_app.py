@@ -162,6 +162,7 @@ class LiveDaemon:
         self.ready, self.event = ready, event
         self.closed = False
         self._event_handler = None
+        self._owner_handler = None
         Gio.DBusProxy.new_for_bus(
             Gio.BusType.SESSION, Gio.DBusProxyFlags.DO_NOT_LOAD_PROPERTIES,
             None, "org.projectluma.Ari1", "/org/projectluma/Ari1", "org.projectluma.Ari1",
@@ -174,10 +175,15 @@ class LiveDaemon:
                 return
             self.proxy = proxy
             self._event_handler = proxy.connect("g-signal", self._signal)
-            self.ready(None)
+            self._owner_handler = proxy.connect("notify::g-name-owner", self._owner_changed)
+            self._owner_changed(proxy)
         except GLib.Error as error:
             if not self.closed:
                 self.ready(error)
+
+    def _owner_changed(self, proxy, *_):
+        if not self.closed:
+            self.ready(None if proxy.get_name_owner() else RuntimeError("Ari is not running"))
 
     def _signal(self, _proxy, _sender, name, params):
         if not self.closed and name == "Event":
@@ -188,6 +194,9 @@ class LiveDaemon:
         if self.proxy is not None and self._event_handler is not None:
             self.proxy.disconnect(self._event_handler)
             self._event_handler = None
+        if self.proxy is not None and self._owner_handler is not None:
+            self.proxy.disconnect(self._owner_handler)
+            self._owner_handler = None
         # Release bound window callbacks even if the async connection finishes
         # after closure. Keep the proxy for late Ask's required Stop cleanup.
         self.ready = None
@@ -264,6 +273,8 @@ class AriWindow(AppWindow):
                 "filter": "All", "store": "All", "q": "", "sq": "", "busy": False, "n": 0}}
         self.state = self.data["state"]
         self.daemon = None
+        self.models_loading = not self.fixture
+        self.models_error = ""
         self.live_cloud_model = None
         self.generation = 0
         self.request = ""
@@ -1099,6 +1110,15 @@ class AriWindow(AppWindow):
                                              for key in ("n", "gpu", "disk") if key in computer), "description", "body", wrap=True, muted=True))
         self.page.append(header)
         self.page.append(self.memory())
+        if self.models_loading or self.models_error:
+            message = ("Loading available models…" if self.models_loading else
+                       "Ari couldn’t load models. Check that Ari is installed and try again.")
+            status = box(text(message, "body", wrap=True), vertical=True, spacing=12)
+            if self.models_error:
+                status.append(self.button("Try again", self.retry_models, name="retry-models"))
+            self.page.append(status)
+            if not self.data["local_models"]:
+                return
         catalog = model_catalog(self.data["local_models"], self.state["store"], self.state["q"])
         self.section("On this computer", "Nothing you say to these leaves this computer")
         installed = box(vertical=True, spacing=2)
@@ -1160,8 +1180,9 @@ class AriWindow(AppWindow):
                            max_children_per_line=1 if self.phone else 3, column_spacing=10, row_spacing=10)
         for model in catalog["store"]:
             grid.append(self.model_card(model))
-        if not catalog["store"]:
-            grid.append(text("No models match.", "caption"))
+        if not catalog["store"] and not catalog["recommended"]:
+            grid.append(text("No models match your search." if self.state["q"] or self.state["store"] != "All"
+                             else "All available models are on this computer.", "caption"))
         self.page.append(grid)
 
     def section(self, title, subtitle=""):
@@ -1989,33 +2010,64 @@ class AriWindow(AppWindow):
             self.render()
         return GLib.SOURCE_REMOVE
 
+    def retry_models(self):
+        if self.closed or self.fixture:
+            return
+        self.models_loading, self.models_error = True, ""
+        self.render()
+        if self.daemon is None or self.daemon.proxy is None:
+            if self.daemon:
+                self.daemon.close()
+            self.daemon = LiveDaemon(self._live_ready, self.on_event)
+        else:
+            # A method call activates an idle service again through D-Bus.
+            self._live_ready(None)
+
     def _live_ready(self, error):
         if self.closed:
             return
-        if error:
-            self.notify("Ari is not running", error=True)
-            return
         self.read_generation += 1
         read_generation = self.read_generation
+        if error and self.data["local_models"] and not self.models_loading:
+            # The host deliberately exits while idle. Keep a loaded catalogue
+            # usable; the next action activates it and owner arrival refreshes.
+            return
+        self.models_loading, self.models_error = not bool(error), str(error) if error else ""
+        if not self.fixture:
+            def capacity_worker():
+                GLib.idle_add(self._capacity_ready, read_generation, live_capacity())
+            threading.Thread(target=capacity_worker, daemon=True, name="ari-capacity-read").start()
+        if error:
+            self.render()
+            return
         navigation_generation = self.generation
         route_generation = self.route_generation
         def models_loaded(value):
-            if self.closed or read_generation != self.read_generation or isinstance(value, Exception):
+            if self.closed or read_generation != self.read_generation:
                 return
-            data = json.loads(value[0])
+            try:
+                if isinstance(value, Exception):
+                    raise value
+                data = json.loads(value[0])
+                local_models = [dict(id=model["id"], n=model["name"], by=model.get("source", ""),
+                    mono=model["name"][:1], sz=model["size"] / 1e9, mem=model.get("ram", 0), wps=0,
+                    good=[], have=model.get("installed", False)) for model in data["models"]]
+                if not local_models:
+                    raise ValueError("The model catalogue is empty")
+            except Exception as failure:
+                self.models_loading, self.models_error = False, str(failure)
+                self.render()
+                return
+            self.models_loading, self.models_error = False, ""
             hardware = data.get("hardware", {})
-            self.data["computer"] = {"n": "This computer", "mem": hardware.get("ram_gb", 0)}
+            self.data["computer"].setdefault("n", "This computer")
+            if hardware.get("ram_gb"):
+                self.data["computer"]["mem"] = hardware["ram_gb"]
             if hardware.get("gpu_name"):
                 self.data["computer"]["gpu"] = hardware["gpu_name"]
-            if not self.fixture:
-                def capacity_worker():
-                    GLib.idle_add(self._capacity_ready, read_generation, live_capacity())
-                threading.Thread(target=capacity_worker, daemon=True, name="ari-capacity-read").start()
             if route_generation == self.route_generation:
                 self.live_cloud_model = data.get("cloud_model")
-            self.data["local_models"] = [dict(id=model["id"], n=model["name"], by=model.get("source", ""),
-                mono=model["name"][:1], sz=model["size"] / 1e9, mem=model.get("ram", 0), wps=0,
-                good=[], have=model.get("installed", False)) for model in data["models"]]
+            self.data["local_models"] = local_models
             if route_generation == self.route_generation:
                 self.state["model"] = self.live_cloud_model["id"] if self.live_cloud_model else data.get("active") or "auto"
             self.render()
@@ -2063,9 +2115,9 @@ class AriWindow(AppWindow):
                     "nodes": [{"k": "setting", "n": entry.get("summary") or entry.get("tool", ""),
                                "m": entry.get("tool", ""), "st": "undone" if state in ("undone", "reverted") else "done"}]}
             self.render()
+        self.daemon.call("Models", callback=models_loaded)
         self.daemon.call("Cloud", "(b)", (False,), cloud_loaded)
         self.daemon.call("Activity", "(u)", (200,), activity_loaded)
-        self.daemon.call("Models", callback=models_loaded)
         self.daemon.call("ListConversations", callback=chats_loaded)
 
     def copy(self, value):
