@@ -1,0 +1,62 @@
+--- a/js/ui/shelf.js
++++ b/js/ui/shelf.js
+@@ -657,6 +657,9 @@
+             // The shelf covers the stage and places its groups (ADR-044); it
+             // never takes input itself. Struts are separate actors.
+         });
++        this.opacity = 0;
++        this._initialLayoutReady = false;
++        this._initialLayoutFrames = 0;
+         this._groups = [];
+ 
+         this._settings = new Gio.Settings({
+@@ -898,6 +901,8 @@
+             this._adoptLaterId = 0;
+             if (this._foldersLaterId) GLib.source_remove(this._foldersLaterId);
+             this._foldersLaterId = 0;
++            if (this._initialPresentationId) GLib.source_remove(this._initialPresentationId);
++            this._initialPresentationId = 0;
+             this._arrange?.destroy();
+             this._arrange = null;
+             // At shutdown the layout manager destroys uiGroup's children, the
+@@ -941,6 +946,31 @@
+             'child-added', () => this._queueDockWidth(),
+             'child-removed', () => this._queueDockWidth(), this);
+         this._sync();
++        this._queueInitialPresentation();
++    }
++
++    _queueInitialPresentation() {
++        // Wait for the real items and allocations before painting the Shelf.
++        this._initialPresentationId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 16, () => {
++            const groups = this._groups.filter(group => group.visible &&
++                group.row.get_children().some(actor => actor.visible && actor.width > 0));
++            const expected = this._shellSettings.get_strv('favorite-apps')
++                .filter(id => Shell.AppSystem.get_default().lookup_app(id)).length;
++            const ready = !Main.layoutManager._startingUp && groups.length > 0 &&
++                this._dash._box.get_children().length >= expected && !this._widthLaterId &&
++                groups.every(group => group.has_allocation() && group.width > 0 && group.height > 0);
++            const key = JSON.stringify(groups.map(group => [group.x, group.y, group.width, group.height,
++                ...group.row.get_children().filter(a => a.visible).map(a => [a.width, a.height])]));
++            this._initialLayoutFrames = ready && key === this._initialLayoutKey
++                ? this._initialLayoutFrames + 1 : 0;
++            this._initialLayoutKey = key;
++            if (this._initialLayoutFrames < 3)
++                return GLib.SOURCE_CONTINUE;
++            this._initialPresentationId = 0;
++            this._initialLayoutReady = true;
++            this.opacity = 255;
++            return GLib.SOURCE_REMOVE;
++        });
+     }
+ 
+     _settingsChanged(key) {
+@@ -2744,7 +2774,7 @@
+         this._bands = bands;
+         this._lastOccupancyKey = this._occupancyKey();
+         this._syncWorkAreaInset(scale);
+-        const animate = St.Settings.get().enable_animations;
++        const animate = this._initialLayoutReady && St.Settings.get().enable_animations;
+         const measure = (actor, vertical) => vertical
+             ? actor.get_preferred_height(this._thickness * scale)[1]
+             : actor.get_preferred_width(this._thickness * scale)[1];

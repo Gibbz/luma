@@ -1,0 +1,254 @@
+--- a/js/ui/lumaFileIndex.js
++++ b/js/ui/lumaFileIndex.js
+@@ -21,6 +21,15 @@
+ const PRIVACY_SCHEMA = 'org.gnome.desktop.privacy';
+ 
+ // Folder contents that are never worth offering, filtered in the index.
++function personalCandidate(candidate) {
++    const path = candidate.path ?? (candidate.uri?.startsWith('file://')
++        ? Gio.File.new_for_uri(candidate.uri).get_path() : '');
++    if (!path) return false;
++    const parts = path.split('/').filter(Boolean);
++    return !['etc', 'usr', 'var', 'proc', 'sys', 'run', 'dev', 'boot'].includes(parts[0]) &&
++        !parts.some(part => part.startsWith('.'));
++}
++
+ const HIDDEN_URL_PARTS = ['/node_modules/', '/__pycache__/', '/site-packages/', '/.git/'];
+ 
+ // Two orderings of the same matches: the shortest names (exact and prefix
+@@ -402,7 +411,7 @@
+             }),
+         ]);
+         throwIfCancelled(cancellable);
+-        let ranked = Ranking.rankFiles([...local(), ...hits].map(c => this._withUsage(c)),
++        let ranked = Ranking.rankFiles([...local(), ...hits].filter(personalCandidate).map(c => this._withUsage(c)),
+             terms, context, RESULT_LIMIT);
+ 
+         // A typo in a longer word: look again with the first half of it.
+@@ -410,7 +419,7 @@
+         if (typoPossible && !ranked.some(item => item.tier >= Ranking.TIER_WORD)) {
+             const more = await this._runQuery(Ranking.ftsQuery(terms, {shorten: true}), cancellable);
+             throwIfCancelled(cancellable);
+-            ranked = Ranking.rankFiles([...local(), ...hits, ...more].map(c => this._withUsage(c)),
++            ranked = Ranking.rankFiles([...local(), ...hits, ...more].filter(personalCandidate).map(c => this._withUsage(c)),
+                 terms, context, RESULT_LIMIT);
+         }
+         for (const item of ranked)
+--- a/js/ui/lumaNotificationBeacon.js
++++ b/js/ui/lumaNotificationBeacon.js
+@@ -92,6 +92,7 @@
+         St.ThemeContext.get_for_stage(global.stage).connectObject('notify::scale-factor', () => this._render(), this);
+         global.stage.connectObject('notify::key-focus', () => this._engagementChanged(), this);
+         this.connect('notify::width', () => this._anchor());
++        this.connect('notify::height', () => this._anchor());
+         this.connect('notify::hover', () => this._engagementChanged());
+         // Native gesture arbitration recognizes a tap on release, so a finger
+         // that starts on the nub can instead pull down without firing a click.
+@@ -109,8 +110,8 @@
+         pull.set_begin_threshold(12);
+         pull.connect('may-recognize', gesture => {
+             const delta = gesture.get_accumulated_delta();
+-            return nubReady() && delta.get_y() > 0 &&
+-                delta.get_y() > Math.abs(delta.get_x());
++            return nubReady() && delta.get_y() * (this._bottomAnchored ? -1 : 1) > 0 &&
++                Math.abs(delta.get_y()) > Math.abs(delta.get_x());
+         });
+         pull.connect('recognize', () => this.open());
+         this.add_action(pull);
+@@ -373,6 +374,14 @@
+         this.visible = Main.sessionMode.hasNotifications && !Main.sessionMode.isLocked && !Main.sessionMode.isGreeter &&
+             !peekCast()?.isMonitorCaptured(monitor.index);
+         const scale = St.ThemeContext.get_for_stage(global.stage).scale_factor;
++        const bottom = Main.shelf?.edgeOfIsland('dock') === 'top';
++        if (this._bottomAnchored !== bottom) {
++            this._bottomAnchored = bottom;
++            this._surface.set_style(bottom ? 'border-radius: 22px 22px 0 0;' : null);
++            this._material?.setCornerRadii(bottom ? [22, 22, 0, 0] : [0, 0, 22, 22]);
++            this._left.queue_repaint(); this._right.queue_repaint();
++            this.queue_relayout();
++        }
+         let top = monitor.y;
+         const groups = Main.shelf?._groups ?? [];
+         for (const g of groups) {
+@@ -381,7 +390,7 @@
+             // rows reserve no space, just as Shelf's own bandReserve specifies.
+             if (Main.shelf.has_allocation() && g.has_allocation() && g.visible &&
+                 g.row.get_children().some(actor => actor.visible) &&
+-                g.placement?.edge === 'top' && g.placement?.monitor === monitor.index) {
++                !bottom && g.placement?.edge === 'top' && g.placement?.monitor === monitor.index) {
+                 const [, y] = g.get_transformed_position();
+                 const [, h] = g.get_transformed_size();
+                 top = Math.max(top, y + h);
+@@ -430,7 +439,7 @@
+         const scale = St.ThemeContext.get_for_stage(global.stage).scale_factor;
+         this.set_position(this._rightAligned
+             ? monitor.x + monitor.width - 30 * scale - this.width
+-            : monitor.x + (monitor.width - this.width) / 2, this._targetTop ?? monitor.y);
++            : monitor.x + (monitor.width - this.width) / 2, this._bottomAnchored ? monitor.y + monitor.height - this.height : (this._targetTop ?? monitor.y));
+     }
+     vfunc_allocate(box) {
+         this.set_allocation(box);
+@@ -438,16 +447,19 @@
+         const width = box.get_width(), height = box.get_height();
+         const scale = St.ThemeContext.get_for_stage(global.stage).scale_factor;
+         this._surface.allocate(new Clutter.ActorBox({x1: 0, y1: 0, x2: width, y2: height}));
+-        this._left.allocate(new Clutter.ActorBox({x1: -12 * scale, y1: 0, x2: 0, y2: 12 * scale}));
+-        this._right.allocate(new Clutter.ActorBox({x1: width, y1: 0, x2: width + 12 * scale, y2: 12 * scale}));
+-        this._glow.allocate(new Clutter.ActorBox({x1: width * .22, y1: height - 2 * scale,
+-            x2: width * .78, y2: height}));
++        const shoulderY = this._bottomAnchored ? height - 12 * scale : 0;
++        this._left.allocate(new Clutter.ActorBox({x1: -12 * scale, y1: shoulderY, x2: 0, y2: shoulderY + 12 * scale}));
++        this._right.allocate(new Clutter.ActorBox({x1: width, y1: shoulderY, x2: width + 12 * scale, y2: shoulderY + 12 * scale}));
++        const glowY = this._bottomAnchored ? 0 : height - 2 * scale;
++        this._glow.allocate(new Clutter.ActorBox({x1: width * .22, y1: glowY,
++            x2: width * .78, y2: glowY + 2 * scale}));
+     }
+     _shoulder(actor, right) {
+         const cr = actor.get_context();
+         const [w, h] = actor.get_surface_size();
+         const color = this._surface.get_theme_node().get_background_color();
+         cr.setSourceRGBA(color.red / 255, color.green / 255, color.blue / 255, color.alpha / 255);
++        if (this._bottomAnchored) { cr.translate(0, h); cr.scale(1, -1); }
+         if (right) { cr.translate(w, 0); cr.scale(-1, 1); }
+         cr.moveTo(0, 0); cr.lineTo(w, 0); cr.lineTo(w, h);
+         cr.arcNegative(0, h, w, 0, -Math.PI / 2); cr.closePath(); cr.fill();
+--- a/js/ui/panel.js
++++ b/js/ui/panel.js
+@@ -1861,7 +1861,12 @@
+             this._statusDateShort.visible = clockVertical;
+         // Time 13/16 over date 11/14, 2 apart: the lines carry their own
+         // leading, so the gap between them is the spec's two pixels.
+-        this._statusClockBox.set_style(`padding: 0 0 0 1px; spacing: 2px;`);
++        this._statusClockBox.set_style(`padding: ${clockVertical ? '0' : '0 0 0 1px'}; spacing: 2px;`);
++        this._statusTimeRow.x_align = clockVertical ? Clutter.ActorAlign.CENTER : Clutter.ActorAlign.START;
++        if (this._statusDateShort) {
++            this._statusDateShort.x_align = Clutter.ActorAlign.CENTER;
++            this._statusDateShort.clutter_text.line_alignment = Pango.Alignment.CENTER;
++        }
+         const textScale = St.ThemeContext.get_for_stage(global.stage).scale_factor;
+         for (const label of [this._statusTime, this._statusDateLabel]) {
+             this._setStatusLineHeight(label);
+--- a/js/ui/search.js
++++ b/js/ui/search.js
+@@ -27,7 +27,7 @@
+ // gives D-Bus providers a short pause so fast typing does not flood them.
+ const LUMA_LOCAL_SEARCH_DELAY_MS = 0;
+ const LUMA_REMOTE_SEARCH_DELAY_MS = 90;
+-const LUMA_MAX_MERGED_ROWS = 14;
++const LUMA_MAX_MERGED_ROWS = 24;
+ const LUMA_MAX_SETTING_ROWS = 4;
+ // Mail, messages and people match on their contents, so they could fill
+ // the list; a few rows are enough, below apps, settings and files.
+@@ -835,8 +835,7 @@
+             x_expand: true,
+         });
+ 
+-        // Beam shows one list for every provider, ordered by score, instead
+-        // of a block per provider.
++        // Rank results within each category before applying section limits.
+         if (this._compact) {
+             this._merged = new St.BoxLayout({
+                 style_class: 'list-search-results luma-search-merged',
+@@ -977,6 +976,7 @@
+             });
+         }
+         display._lumaRank = this._rankFor(providerDisplay, display, index);
++        display._resultsViewProvider = providerDisplay.provider;
+         if (display.get_parent())
+             display.get_parent().remove_child(display);
+         this._merged.add_child(display);
+@@ -986,14 +986,30 @@
+     // One list by score. Settings stay together as one group, placed where
+     // their best row belongs, so a query never scatters them between files.
+     _sortMergedRows() {
+-        const rows = this._merged.get_children();
+-        const settingBest = Math.max(-Infinity, ...rows
+-            .filter(row => row._lumaRank.kind === 'setting')
+-            .map(row => row._lumaRank.score));
+-        const groupScore = row => row._lumaRank.kind === 'setting' ? settingBest : row._lumaRank.score;
+-        rows.sort((a, b) => (groupScore(b) - groupScore(a)) ||
++        this._merged.get_children().filter(row => row._lumaSection).forEach(row => row.destroy());
++        const rows = this._merged.get_children().filter(row => row._lumaRank);
++        const sectionOf = row => row._resultsViewProvider?.id === 'org.projectluma.Depot.desktop'
++            ? 'Depot' : ({app: 'Apps', setting: 'Settings', file: 'Files',
++                mail: 'Mail', message: 'Messages', contact: 'People', calendar: 'Calendar',
++                music: 'Music', photo: 'Photos', place: 'Places'}[row._lumaRank.kind] ?? 'Other');
++        const order = ['Apps', 'Settings', 'Files', 'Depot', 'People', 'Messages', 'Mail', 'Calendar', 'Music', 'Photos', 'Places', 'Other'];
++        rows.sort((a, b) => order.indexOf(sectionOf(a)) - order.indexOf(sectionOf(b)) ||
+             Ranking.compareRanked(a._lumaRank, b._lumaRank));
+-        rows.forEach((row, position) => this._merged.set_child_at_index(row, position));
++        let position = 0, previous = null;
++        for (const row of rows) {
++            const section = sectionOf(row);
++            if (section !== previous) {
++                const heading = new St.Label({text: section, style_class: 'luma-search-section',
++                    style: 'padding: 12px 12px 4px; font-size: 12px; font-weight: 600;',
++                    can_focus: false, reactive: false});
++                heading._lumaSection = section;
++                this._merged.add_child(heading);
++                this._merged.set_child_at_index(heading, position++);
++                previous = section;
++            }
++            row._lumaSectionName = section;
++            this._merged.set_child_at_index(row, position++);
++        }
+         this._syncMergedLimit();
+     }
+ 
+@@ -1003,7 +1019,7 @@
+                 this._merged.remove_child(row);
+         }
+         providerDisplay._lumaRows = [];
+-        this._syncMergedLimit();
++        this._sortMergedRows();
+     }
+ 
+     firstMergedRowOf(providerDisplay) {
+@@ -1018,7 +1034,8 @@
+         const seenLocations = new Set();
+         const contentShown = new Map();
+         let shown = 0;
+-        for (const row of this._merged.get_children()) {
++        const sectionCounts = new Map();
++        for (const row of this._merged.get_children().filter(row => row._lumaRank)) {
+             let visible = shown < LUMA_MAX_MERGED_ROWS;
+             if (row._lumaRank.kind === 'setting') {
+                 const key = Ranking.foldText(row.metaInfo.name);
+@@ -1035,10 +1052,18 @@
+                 if (visible)
+                     contentShown.set(row._lumaRank.kind, count + 1);
+             }
++            const section = row._lumaSectionName;
++            const count = sectionCounts.get(section) ?? 0;
++            visible &&= count < ({Apps: 5, Settings: 4, Files: 6, Depot: 4}[section] ?? 3);
++            if (visible) sectionCounts.set(section, count + 1);
+             row.visible = visible;
+             if (visible)
+                 shown++;
+         }
++        const children = this._merged.get_children();
++        for (const heading of children.filter(row => row._lumaSection))
++            heading.visible = children.some(row => row._lumaRank && row.visible &&
++                row._lumaSectionName === heading._lumaSection);
+     }
+ 
+     _reloadRemoteProviders() {
+@@ -1238,7 +1263,7 @@
+         let newDefaultResult = null;
+ 
+         if (this._compact) {
+-            newDefaultResult = this._merged.get_children().find(row => row.visible) ?? null;
++            newDefaultResult = this._merged.get_children().find(row => row._lumaRank && row.visible) ?? null;
+             if (newDefaultResult !== this._defaultResult) {
+                 this._setSelected(this._defaultResult, false);
+                 this._setSelected(newDefaultResult, this._highlightDefault);
+--- a/js/ui/shelfMedia.js
++++ b/js/ui/shelfMedia.js
+@@ -85,6 +85,7 @@
+         // stacked controls; the title and artist move to the island's name
+         // and tooltip, never rotated or clipped into a 36px column.
+         this._copy.visible = !vertical;
++        this._copyStack.visible = !vertical;
+         this._copy.set_style(null);
+         this._copyStack.set_style(null);
+         this._vertical = vertical;

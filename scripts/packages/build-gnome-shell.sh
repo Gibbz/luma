@@ -322,6 +322,13 @@ install -m 0644 "$repo_root/patches/gnome-shell/0265-settings-native-keyboard-se
 install -m 0644 "$repo_root/patches/gnome-shell/0266-notifications-dismiss-on-client-click.patch" "$rpmbuild_dir/SOURCES/"
 install -m 0644 "$repo_root/patches/gnome-shell/0267-lock-settings-disconnect-before-dispose.patch" "$rpmbuild_dir/SOURCES/"
 install -m 0644 "$repo_root/patches/gnome-shell/0268-tiling-wrapper-destroy-without-recursion.patch" "$rpmbuild_dir/SOURCES/"
+install -m 0644 "$repo_root/patches/gnome-shell/0269-dash-recognized-hold-feedback.patch" "$rpmbuild_dir/SOURCES/"
+install -m 0644 "$repo_root/patches/gnome-shell/0270-dash-settled-initial-presentation.patch" "$rpmbuild_dir/SOURCES/"
+install -m 0644 "$repo_root/patches/gnome-shell/0271-maximized-window-border-settings.patch" "$rpmbuild_dir/SOURCES/"
+install -m 0644 "$repo_root/patches/gnome-shell/0272-dash-arrangement-carrier-order.patch" "$rpmbuild_dir/SOURCES/"
+install -m 0644 "$repo_root/patches/gnome-shell/0273-live-installed-application-search.patch" "$rpmbuild_dir/SOURCES/"
+install -m 0644 "$repo_root/patches/gnome-shell/0274-dash-edges-and-grouped-search.patch" "$rpmbuild_dir/SOURCES/"
+install -m 0644 "$repo_root/patches/gnome-shell/0275-status-clock-well-and-options-polish.patch" "$rpmbuild_dir/SOURCES/"
 install -m 0644 "$repo_root/tests/gnome-shell/settings-teardown.js" "$rpmbuild_dir/SOURCES/"
 install -m 0644 "$repo_root/tests/gnome-shell/clock-line-metrics.js" "$rpmbuild_dir/SOURCES/"
 install -m 0644 "$repo_root/tests/gnome-shell/window-application-identity.py" "$rpmbuild_dir/SOURCES/"
@@ -1204,7 +1211,7 @@ install -m 0644 "$repo_root/config/shared/design-tokens.json" "$rpmbuild_dir/SOU
       grep -Fq "_mergeBands(resolved)" luma-dash.js
       grep -Fq "_ghostIsland(id)" luma-dash.js
       grep -Fq "shelf-free-placement" luma-dash.js
-      grep -Fq "margin: this._padding * scale," luma-dash.js
+      grep -Fq "margin: this._windowBorderSize() * scale," luma-dash.js
       grep -Fq "export function zoneWeight" shelfArrangement.js
       grep -Fq "export function bandSegments" shelfArrangement.js
       grep -Fq "EdgeLine" shelfArrange-0167.js

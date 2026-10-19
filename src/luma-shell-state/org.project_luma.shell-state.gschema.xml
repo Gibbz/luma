@@ -101,6 +101,17 @@
       <summary>Keep end gutters when the Dash spans its edge</summary>
       <description>Retained while spanning is disabled; has no effect until spanning is enabled.</description>
     </key>
+    <key name="window-border-enabled" type="b">
+      <default>true</default>
+      <summary>Show a desktop border around maximized windows</summary>
+      <description>Leave the wallpaper visible at unoccupied screen edges. Fullscreen windows bypass this border.</description>
+    </key>
+    <key name="window-border-size" type="i">
+      <range min="1" max="64"/>
+      <default>14</default>
+      <summary>Maximized window border in logical pixels</summary>
+      <description>Set the desktop border independently of the Dash padding. Until explicitly chosen, preserve the existing Dash padding.</description>
+    </key>
     <key name="shelf-padding" type="i">
       <range min="4" max="24"/>
       <default>14</default>
