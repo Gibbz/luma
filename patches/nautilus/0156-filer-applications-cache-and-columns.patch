@@ -1,0 +1,266 @@
+From: Project Luma <maintainers@projectluma.org>
+Subject: [PATCH] Filer: cache Applications and hide file metadata columns
+
+--- a/src/nautilus-applications-directory.c
++++ b/src/nautilus-applications-directory.c
+@@ -44,6 +44,44 @@
+ } ApplicationsReady;
+ 
+ static void start_loading (NautilusApplicationsDirectory *self);
++
++/* Reopening Applications should not repeat discovery and host verification.
++ * Keep one immutable, bounded snapshot in this process, never on disk. Both
++ * local and authenticated-host change notifications invalidate it; the short
++ * lifetime also bounds staleness if a notification is lost. */
++static GMutex catalogue_lock;
++static GPtrArray *catalogue;
++static guint catalogue_generation;
++static gint64 catalogue_expires;
++static GAppInfoMonitor *catalogue_monitor;
++static GDBusConnection *catalogue_bus;
++
++static void
++invalidate_catalogue (void)
++{
++    g_mutex_lock (&catalogue_lock);
++    GPtrArray *old = g_steal_pointer (&catalogue);
++    catalogue_generation++;
++    g_mutex_unlock (&catalogue_lock);
++    if (old != NULL)
++        g_ptr_array_unref (old);
++}
++
++static void
++remember_catalogue (guint generation, GPtrArray *infos)
++{
++    if (infos->len > 4096)
++        return;
++    g_mutex_lock (&catalogue_lock);
++    if (generation == catalogue_generation)
++    {
++        g_clear_pointer (&catalogue, g_ptr_array_unref);
++        catalogue = g_ptr_array_ref (infos);
++        catalogue_expires = g_get_monotonic_time () + 30 * G_TIME_SPAN_SECOND;
++    }
++    g_mutex_unlock (&catalogue_lock);
++}
++
+ 
+ G_DEFINE_TYPE_WITH_CODE (NautilusApplicationsDirectory, nautilus_applications_directory, NAUTILUS_TYPE_DIRECTORY,
+                          nautilus_ensure_extension_points ();
+@@ -336,12 +374,25 @@
+     (void) source_object;
+     (void) task_data;
+     (void) cancellable;
++    g_mutex_lock (&catalogue_lock);
++    guint generation = catalogue_generation;
++    GPtrArray *cached = catalogue != NULL && g_get_monotonic_time () < catalogue_expires
++        ? g_ptr_array_ref (catalogue) : NULL;
++    g_mutex_unlock (&catalogue_lock);
++    if (cached != NULL)
++    {
++        g_task_return_pointer (task, cached, (GDestroyNotify) g_ptr_array_unref);
++        return;
++    }
+     if (g_file_test ("/.flatpak-info", G_FILE_TEST_IS_REGULAR))
+     {
+         g_autoptr (GError) error = NULL;
+         GPtrArray *infos = infos_from_host (cancellable, &error);
+         if (infos != NULL)
++        {
++            remember_catalogue (generation, infos);
+             g_task_return_pointer (task, infos, (GDestroyNotify) g_ptr_array_unref);
++        }
+         else
+             g_task_return_error (task, g_steal_pointer (&error));
+         return;
+@@ -362,6 +413,7 @@
+             g_ptr_array_add (infos, info);
+         }
+     }
++    remember_catalogue (generation, infos);
+     g_task_return_pointer (task, infos, (GDestroyNotify) g_ptr_array_unref);
+ }
+ 
+@@ -429,6 +481,7 @@
+ static void
+ real_force_reload (NautilusDirectory *directory)
+ {
++    invalidate_catalogue ();
+     start_loading (NAUTILUS_APPLICATIONS_DIRECTORY (directory));
+ }
+ 
+@@ -445,7 +498,8 @@
+ on_applications_changed (GAppInfoMonitor *monitor, NautilusApplicationsDirectory *self)
+ {
+     (void) monitor;
+-    if (self->reload_source == 0)
++    invalidate_catalogue ();
++    if (self != NULL && self->reload_source == 0)
+         self->reload_source = g_timeout_add_full (G_PRIORITY_DEFAULT, 100,
+             reload_after_changes, g_object_ref (self), g_object_unref);
+ }
+@@ -464,6 +518,15 @@
+     NautilusApplicationsDirectory *self = data;
+     (void) source;
+     self->host_bus = g_bus_get_finish (result, NULL);
++    /* Keep invalidation alive even while no Applications view is open. */
++    if (self->host_bus != NULL && catalogue_bus == NULL)
++    {
++        catalogue_bus = g_object_ref (self->host_bus);
++        g_dbus_connection_signal_subscribe (catalogue_bus,
++            "org.projectluma.ApplicationDirectory1", "org.projectluma.ApplicationDirectory1", "Changed",
++            "/org/projectluma/ApplicationDirectory1", NULL, G_DBUS_SIGNAL_FLAGS_NONE,
++            on_host_applications_changed, NULL, NULL);
++    }
+     if (self->host_bus != NULL)
+         self->host_subscription = g_dbus_connection_signal_subscribe (self->host_bus,
+             "org.projectluma.ApplicationDirectory1", "org.projectluma.ApplicationDirectory1", "Changed",
+@@ -529,6 +592,11 @@
+ {
+     if (g_file_test ("/.flatpak-info", G_FILE_TEST_IS_REGULAR))
+         g_bus_get (G_BUS_TYPE_SESSION, NULL, host_bus_ready, g_object_ref (self));
++    if (catalogue_monitor == NULL)
++    {
++        catalogue_monitor = g_app_info_monitor_get ();
++        g_signal_connect (catalogue_monitor, "changed", G_CALLBACK (on_applications_changed), NULL);
++    }
+     self->app_monitor = g_app_info_monitor_get ();
+     g_signal_connect (self->app_monitor,
+                       "changed",
+--- a/src/nautilus-list-view.c
++++ b/src/nautilus-list-view.c
+@@ -196,6 +196,16 @@
+     /* Luma keeps starring in actions, never as a list column.
+      * Discard stale per-folder column preferences as well. */
+     g_hash_table_remove (visible_columns_hash, "starred");
++    NautilusFile *directory_file = nautilus_list_base_get_directory_as_file (NAUTILUS_LIST_BASE (self));
++    if (directory_file != NULL && nautilus_file_is_in_applications (directory_file))
++    {
++        /* These are launch identities, not files with useful disk metadata.
++         * Filter presentation only; do not overwrite folder preferences. */
++        g_hash_table_remove (visible_columns_hash, "size");
++        g_hash_table_remove (visible_columns_hash, "type");
++        g_hash_table_remove (visible_columns_hash, "date_modified");
++    }
++
+     if (self->phone_layout && self->search_directory == NULL)
+     {
+         /* Temporary phone columns do not rewrite saved desktop preferences. */
+--- a/test/automated/display/test-luma-column-header-menu.c
++++ b/test/automated/display/test-luma-column-header-menu.c
+@@ -1,5 +1,6 @@
+ /* SPDX-License-Identifier: GPL-3.0-or-later */
+ #include <nautilus-application.h>
++#include <nautilus-applications-directory.h>
+ #include <nautilus-column-view.h>
+ #include <nautilus-sidebar.h>
+ #include <nautilus-sidebar-row.h>
+@@ -152,6 +153,99 @@
+     g_assert_nonnull (gtk_column_view_column_get_header_menu (modified));
+     nautilus_column_save_metadata (file, NULL, NULL);
+     g_assert_true (g_file_delete (location, NULL, NULL));
++}
++
++static NautilusDirectory *
++load_applications (const char *uri)
++{
++    g_autoptr (GFile) location = g_file_new_for_uri (uri);
++    NautilusDirectory *directory = g_object_new (NAUTILUS_TYPE_APPLICATIONS_DIRECTORY,
++                                                "location", location, NULL);
++    gint64 deadline = g_get_monotonic_time () + 5 * G_TIME_SPAN_SECOND;
++    while (!nautilus_directory_are_all_files_seen (directory) && g_get_monotonic_time () < deadline)
++    {
++        while (g_main_context_iteration (NULL, FALSE));
++        g_usleep (1000);
++    }
++    g_assert_true (nautilus_directory_are_all_files_seen (directory));
++    return directory;
++}
++
++static gboolean
++has_probe (NautilusDirectory *directory)
++{
++    g_autolist (NautilusFile) files = nautilus_directory_get_file_list (directory);
++    for (GList *l = files; l != NULL; l = l->next)
++        if (g_strcmp0 (nautilus_file_get_name (l->data), "org.projectluma.CacheProbe.desktop") == 0)
++            return TRUE;
++    return FALSE;
++}
++
++static void
++test_applications_columns_and_refresh (void)
++{
++    g_autofree char *apps = g_build_filename (g_get_user_data_dir (), "applications", NULL);
++    g_assert_cmpint (g_mkdir_with_parents (apps, 0700), ==, 0);
++    /* Exercise a real desktop catalogue, not a mock enumeration result. */
++    g_autofree char *entry = g_build_filename (apps, "org.projectluma.CacheProbe.desktop", NULL);
++    g_assert_true (g_file_set_contents (entry,
++        "[Desktop Entry]\nType=Application\nName=Catalogue probe\nExec=/bin/true\nIcon=application-x-executable\n", -1, NULL));
++    g_autoptr (NautilusDirectory) first = load_applications ("applications:///cache-probe-first");
++    g_assert_true (has_probe (first));
++    settle_metadata ();
++    /* A fresh provider object must reuse the process catalogue, even after
++     * the preceding view was left. Bound the actual ready-to-display time. */
++    gint64 opening = g_get_monotonic_time ();
++    g_autoptr (NautilusDirectory) second = load_applications ("applications:///cache-probe-second");
++    gint64 elapsed = g_get_monotonic_time () - opening;
++    g_print ("Applications warm catalogue ready: %.2fms\n", elapsed / 1000.0);
++    g_assert_cmpint (elapsed, <, 250 * G_TIME_SPAN_MILLISECOND);
++    g_assert_true (has_probe (second));
++
++    g_autofree char *path = g_dir_make_tmp ("filer-app-columns-XXXXXX", NULL);
++    g_autoptr (GFile) folder = g_file_new_for_path (path);
++    g_autoptr (NautilusDirectory) normal = nautilus_directory_get (folder);
++    g_autoptr (NautilusFile) normal_file = nautilus_directory_get_corresponding_file (normal);
++    char *columns[] = { "name", "size", "type", "date_modified", NULL };
++    nautilus_column_save_metadata (normal_file, columns, columns);
++    settle_metadata ();
++    g_autoptr (NautilusListView) list = nautilus_list_view_new ();
++    g_object_ref_sink (list);
++    nautilus_list_base_setup_directory (NAUTILUS_LIST_BASE (list), second);
++    GtkColumnView *view = find_columns (GTK_WIDGET (list));
++    for (guint i = 1; columns[i] != NULL; i++)
++    {
++        g_autoptr (GtkColumnViewColumn) column = find_column (view, columns[i]);
++        g_assert_false (gtk_column_view_column_get_visible (column));
++    }
++    g_autoptr (GtkColumnViewColumn) name = find_column (view, "name");
++    g_assert_true (gtk_column_view_column_get_visible (name));
++    nautilus_list_base_setup_directory (NAUTILUS_LIST_BASE (list), normal);
++    for (guint i = 1; columns[i] != NULL; i++)
++    {
++        g_autoptr (GtkColumnViewColumn) column = find_column (view, columns[i]);
++        g_assert_true (gtk_column_view_column_get_visible (column));
++    }
++    g_auto (GStrv) saved = nautilus_column_get_visible_columns (normal_file);
++    g_assert_cmpstrv (saved, columns);
++
++    g_assert_cmpint (g_remove (entry), ==, 0);
++    gint64 deadline = g_get_monotonic_time () + 4 * G_TIME_SPAN_SECOND;
++    while (has_probe (second) && g_get_monotonic_time () < deadline)
++        settle_metadata ();
++    g_assert_false (has_probe (second));
++    g_autoptr (NautilusDirectory) after_remove = load_applications ("applications:///cache-probe-removed");
++    g_assert_false (has_probe (after_remove));
++    g_assert_true (g_file_set_contents (entry,
++        "[Desktop Entry]\nType=Application\nName=Reinstalled catalogue probe\nExec=/bin/true\n", -1, NULL));
++    deadline = g_get_monotonic_time () + 4 * G_TIME_SPAN_SECOND;
++    while (!has_probe (second) && g_get_monotonic_time () < deadline)
++        settle_metadata ();
++    g_assert_true (has_probe (second));
++    g_assert_cmpint (g_remove (entry), ==, 0);
++    nautilus_column_save_metadata (normal_file, NULL, NULL);
++    g_assert_true (g_file_delete (folder, NULL, NULL));
++    g_print ("PASS: Applications columns, folder preference restoration and real install/remove refresh\n");
+ }
+ 
+ static void
+@@ -449,6 +543,7 @@
+     test_v70_table_labels ();
+     test_view_modes_follow_slot ();
+     test_header_columns ();
++    test_applications_columns_and_refresh ();
+     test_favorites ();
+     test_sidebar_customization ();
+     test_parent_drag ();
