@@ -200,14 +200,17 @@ class TerminalModel:
         return other
 
     def close_pane(self, pane_id: int) -> None:
-        if not any(pane.id == pane_id for pane in self.current.panes):
+        session = next((item for item in self.sessions
+                        if any(pane.id == pane_id for pane in item.panes)), None)
+        if session is None:
             raise KeyError(pane_id)
-        root = _remove(self.current.root, pane_id)
+        root = _remove(session.root, pane_id)
         if root is None:
-            self.close_session(self.current_id)
+            self.close_session(session.id)
             return
-        self.current.root = root
-        self.active_pane_id = next(walk(root)).id
+        session.root = root
+        if session.id == self.current_id and self.active_pane_id == pane_id:
+            self.active_pane_id = next(walk(root)).id
 
     def close_session(self, session_id: int) -> None:
         if not any(session.id == session_id for session in self.sessions):

@@ -28,6 +28,28 @@ class TerminalModelTest(unittest.TestCase):
         model.activate_session(second)
         self.assertEqual(model.active.cwd, "/tmp/two")
 
+    def test_background_exit_keeps_current_session_and_its_active_split(self):
+        model = TerminalModel("/tmp/one")
+        background = model.current.id
+        first = model.active.id
+        second = model.split_active("row").id
+        foreground = model.new_session("/tmp/two").id
+        active = model.split_active("col").id
+        model.close_pane(second)
+        self.assertEqual(model.current_id, foreground)
+        self.assertEqual(model.active_pane_id, active)
+        self.assertEqual(model.sessions[0].panes[0].id, first)
+        model.close_pane(first)
+        self.assertEqual([session.id for session in model.sessions], [foreground])
+        self.assertEqual(model.active_pane_id, active)
+
+    def test_closing_unfocused_split_preserves_keyboard_target(self):
+        model = TerminalModel("/tmp/one")
+        first = model.active.id
+        active = model.split_active("row").id
+        model.close_pane(first)
+        self.assertEqual(model.active_pane_id, active)
+
     def test_last_session_replaced_and_rename_reset(self):
         model = TerminalModel("/tmp/one")
         old = model.current.id

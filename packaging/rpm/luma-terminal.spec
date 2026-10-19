@@ -7,7 +7,7 @@
 # (org.projectluma.Terminal) and desktop file, and no Obsoletes or Conflicts.
 Name:           luma-terminal
 Version:        0.1.0
-Release:        1.luma.4.creator20261004.1%{?dist}
+Release:        1.luma.6.creator20261019.1%{?dist}
 Summary:        Terminal for Luma
 License:        MPL-2.0
 URL:            https://projectluma.org/
@@ -70,7 +70,7 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/org.projectluma.Termi
 grep -Fxq 'Name=Terminal' %{buildroot}%{_datadir}/applications/org.projectluma.Terminal.desktop
 test -f %{buildroot}%{_datadir}/%{name}/style/terminal.css
 %{python3} counted-unittest.py --self-test
-dbus-run-session -- xvfb-run -a --server-args="-screen 0 1280x800x24" env GSK_RENDERER=cairo GDK_DEBUG=no-portals PYTHONPATH=$PWD/src/luma-terminal %{python3} counted-unittest.py src/luma-terminal/tests 6
+dbus-run-session -- xvfb-run -a --server-args="-screen 0 1280x800x24" env GSK_RENDERER=cairo GDK_DEBUG=no-portals PYTHONPATH=$PWD/src/luma-terminal %{python3} counted-unittest.py src/luma-terminal/tests 8
 # The installed launcher imports from the installed tree, VTE included.
 PYTHONPATH= %{python3} -c "import sys; sys.path.insert(0, '%{buildroot}%{_datadir}/%{name}'); import gi; gi.require_version('Vte', '3.91'); from gi.repository import Vte; import luma_terminal.terminal"
 # A real shell spawned in the terminal, a command delivered, selected, split
@@ -78,6 +78,8 @@ PYTHONPATH= %{python3} -c "import sys; sys.path.insert(0, '%{buildroot}%{_datadi
 cd src/luma-terminal
 SHELL=/bin/bash dbus-run-session -- xvfb-run -a --server-args="-screen 0 1280x800x24" \
   env GSK_RENDERER=cairo PYTHONPATH=$PWD %{python3} tests/smoke_vte.py
+SHELL=/bin/bash dbus-run-session -- xvfb-run -a --server-args="-screen 0 1280x800x24" \
+  env GSK_RENDERER=cairo PYTHONPATH=$PWD %{python3} tests/smoke_lifecycle.py
 
 %files
 %license MPL-2.0.txt
@@ -87,6 +89,9 @@ SHELL=/bin/bash dbus-run-session -- xvfb-run -a --server-args="-screen 0 1280x80
 %{_datadir}/icons/hicolor/scalable/apps/org.projectluma.Terminal.svg
 
 %changelog
+* Mon Oct 19 2026 Project Luma <maintainers@projectluma.org> - 0.1.0-1.luma.6.creator20261019.1
+- Close exited terminal panes and terminate shells and foreground jobs on close.
+
 * Sat Sep 26 2026 Project Luma <maintainers@projectluma.org> - 0.1.0-1.luma.4.creator20261004.1
 - Release build from the reconciled 2026-09-28 tree.
 

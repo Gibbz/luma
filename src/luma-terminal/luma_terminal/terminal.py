@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import unquote, urlparse
@@ -151,6 +152,9 @@ class TerminalWindow(AppWindow):
         self.pane_scrolls: dict[int, Gtk.ScrolledWindow] = {}
         self.terminals: dict[int, Gtk.Widget] = {}
         self._spawn_generation: dict[int, int] = {}
+        self._child_pids: dict[int, int] = {}
+        self._spawn_cancellables: dict[int, Gio.Cancellable] = {}
+        self._closing = False
         self._search_entry: Gtk.Entry | None = None
         self._selected_block: int | None = None
         self._live_selection_pane_id: int | None = None
@@ -169,6 +173,7 @@ class TerminalWindow(AppWindow):
                          commands=self._commands(), default_width=960, default_height=620,
                          minimum_width=360, minimum_height=420)
         self.connect("notify::css-classes", self._refresh_vte_palettes)
+        self.connect("close-request", self._close_requested)
 
         self.stage = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True, vexpand=True)
         self.stage.set_name("tm-stage")
@@ -589,16 +594,23 @@ class TerminalWindow(AppWindow):
 
         def spawned(_vte, pid, error, *_unused):
             if self._spawn_generation.get(pane.id) != generation:
+                if pid > 0:
+                    self._hangup(pid)
                 return
+            self._spawn_cancellables.pop(pane.id, None)
             if error is not None:
                 Toast.show(self.host, f"Session could not start: {error.message}", kind="error")
             elif pid <= 0:
                 Toast.show(self.host, "Session could not start", kind="error")
+            else:
+                self._child_pids[pane.id] = pid
 
         if self.profile and self.profile.container not in ("", "session"):
             Toast.show(self.host, "This Ptyxis container profile needs its own launcher", kind="warning")
             return
         argv = argv_for_profile(self.profile, shell)
+        cancellable = Gio.Cancellable()
+        self._spawn_cancellables[pane.id] = cancellable
         terminal.spawn_async(
             pty_flags=self._vte().PtyFlags.DEFAULT,
             working_directory=pane.cwd,
@@ -607,7 +619,7 @@ class TerminalWindow(AppWindow):
             spawn_flags=GLib.SpawnFlags.DEFAULT,
             child_setup=None,
             timeout=-1,
-            cancellable=None,
+            cancellable=cancellable,
             callback=spawned,
         )
 
@@ -619,8 +631,25 @@ class TerminalWindow(AppWindow):
                 self._show_prompt()
 
     def _child_exited(self, pane_id: int) -> None:
-        if pane_id in self.pane_views:
-            Toast.show(self.host, "Session ended", kind="done")
+        self._child_pids.pop(pane_id, None)
+        if not self._closing and pane_id in self.pane_views:
+            self._close_pane(pane_id)
+
+    @staticmethod
+    def _hangup(pid: int) -> None:
+        # VTE starts the shell as its own session/process-group leader. Never
+        # signal an inherited process group (which could contain Terminal).
+        try:
+            if pid > 0 and os.getpgid(pid) == pid:
+                os.killpg(pid, signal.SIGHUP)
+        except ProcessLookupError:
+            pass
+
+    def _close_requested(self, *_args) -> bool:
+        self._closing = True
+        for pane_id in tuple(self.pane_views):
+            self._discard_pane(pane_id)
+        return False
 
     def _focus_pane(self, pane_id: int) -> None:
         if pane_id in {pane.id for pane in self.model.current.panes}:
@@ -927,6 +956,13 @@ class TerminalWindow(AppWindow):
         self._close_pane(self.model.active_pane_id)
 
     def _close_pane(self, pane_id: int) -> None:
+        session = next((item for item in self.model.sessions
+                        if any(pane.id == pane_id for pane in item.panes)), None)
+        if session is None or self._closing:
+            return
+        if len(session.panes) == 1 and len(self.model.sessions) == 1:
+            self.close()
+            return
         self._reset_selection()
         self._discard_pane(pane_id)
         self.model.close_pane(pane_id)
@@ -938,6 +974,11 @@ class TerminalWindow(AppWindow):
         self.close_session(self.model.current_id)
 
     def close_session(self, session_id: int) -> None:
+        if self._closing:
+            return
+        if len(self.model.sessions) == 1 and self.model.current_id == session_id:
+            self.close()
+            return
         self._reset_selection()
         session = next(item for item in self.model.sessions if item.id == session_id)
         for pane in session.panes:
@@ -949,14 +990,31 @@ class TerminalWindow(AppWindow):
 
     def _discard_pane(self, pane_id: int) -> None:
         view = self.pane_views.pop(pane_id, None)
-        self.terminals.pop(pane_id, None)
+        terminal = self.terminals.pop(pane_id, None)
+        self._spawn_generation.pop(pane_id, None)
+        cancellable = self._spawn_cancellables.pop(pane_id, None)
+        if cancellable is not None:
+            cancellable.cancel()
+        pid = self._child_pids.pop(pane_id, None)
+        if pid is not None:
+            # Job control may put the foreground command in a separate group.
+            # Hang it up as well as the shell when the user closes this pane.
+            if terminal is not None:
+                pty = terminal.get_pty()
+                if pty is not None:
+                    try:
+                        foreground = os.tcgetpgrp(pty.get_fd())
+                        if foreground > 0 and foreground != os.getpgrp():
+                            os.killpg(foreground, signal.SIGHUP)
+                    except (OSError, ProcessLookupError):
+                        pass
+            self._hangup(pid)
         self._fetch_layouts.pop(pane_id, None)
         if self._live_selection_pane_id == pane_id:
             self._live_selection_pane_id = None
         self.pane_scrolls.pop(pane_id, None)
         self._pane_close_buttons.pop(pane_id, None)
         self._hovered_panes.discard(pane_id)
-        self._spawn_generation.pop(pane_id, None)
         if view is not None:
             self._detach(view)
 
