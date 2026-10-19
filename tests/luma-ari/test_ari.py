@@ -234,6 +234,30 @@ class Cloud(unittest.TestCase):
         found = {m.id for m in cloud.parse_catalogue(self.CATALOGUE)}
         self.assertEqual(found, {"cheap/fast", "big/frontier", "mid/builder"})
 
+    def test_offline_catalogue_never_fetches_or_waits_for_online_lookup(self):
+        from ari import cloud
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as directory:
+            cache = Path(directory) / "models.json"
+            cache.write_text(json.dumps(self.CATALOGUE))
+            os.utime(cache, (1, 1))  # stale remains useful while offline
+            with patch.object(cloud, "_get", side_effect=AssertionError("Offline fetched the network")):
+                # Holding the real lock reproduces a concurrent cloud refresh.
+                # A helper thread bounds the regression instead of hanging CI.
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as worker:
+                    with cloud._catalogue_lock:
+                        future = worker.submit(cloud.catalogue, offline=True, cache=cache)
+                        result = future.result(timeout=1)
+                self.assertEqual(len(result), 3)
+                for contents in (None, "invalid json"):
+                    if contents is None:
+                        cache.unlink()
+                    else:
+                        cache.write_text(contents)
+                    with self.assertRaises(cloud.CloudError):
+                        cloud.catalogue(offline=True, cache=cache)
+
     def test_cost_is_told_per_question_and_expensive_models_are_marked(self):
         from ari import cloud
         models = {m.id: m for m in cloud.parse_catalogue(self.CATALOGUE)}

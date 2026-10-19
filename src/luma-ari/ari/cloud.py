@@ -187,8 +187,17 @@ def parse_catalogue(value: dict) -> list[CloudModel]:
 _catalogue_lock = threading.Lock()
 
 
-def catalogue(*, refresh: bool = False, cache: Path | None = None) -> list[CloudModel]:
+def catalogue(*, refresh: bool = False, cache: Path | None = None,
+              offline: bool = False) -> list[CloudModel]:
     cache = cache or paths.data_dir() / "openrouter-models.json"
+    if offline:
+        # Models is served on the D-Bus main loop. It must neither fetch nor
+        # wait for an online worker holding the catalogue lock. A stale cache
+        # is enough to describe the selected cloud model; Cloud refreshes it.
+        try:
+            return parse_catalogue(json.loads(cache.read_text()))
+        except (OSError, ValueError) as error:
+            raise CloudError("The cloud model catalogue is not cached.") from error
     with _catalogue_lock:
         fresh = cache.is_file() and time.time() - cache.stat().st_mtime < CATALOGUE_MAX_AGE
         if not refresh and fresh:

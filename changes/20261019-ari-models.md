@@ -1,0 +1,1 @@
+Ari’s local model catalogue no longer waits for online cloud discovery. Models shows loading and retry states, restores its catalogue after a host-service restart, and retains available model controls while the service is idle.

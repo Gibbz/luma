@@ -947,6 +947,55 @@ class FixtureRuntime(unittest.TestCase):
         self.window.download("qwen14")
         self.assertEqual(self.window.daemon.call.call_count, 2)
 
+    def test_models_failure_has_retry_and_recovers_real_catalogue_buttons(self):
+        from unittest.mock import Mock
+        window = self.window
+        window.fixture = False
+        window.data["local_models"] = []
+        window.daemon = Mock()
+        window.state.update(view="models", store="All", q="")
+        with patch.object(lumaui_app, "live_capacity", return_value={}):
+            window._live_ready(None)
+            self.assertTrue(window.models_loading)
+            callback = next(call.kwargs["callback"] for call in window.daemon.call.call_args_list
+                            if call.args[0] == "Models")
+            callback(RuntimeError("Service unavailable"))
+            self.assertFalse(window.models_loading)
+            def descendants(widget):
+                yield widget
+                for child in _children(widget):
+                    yield from descendants(child)
+            retry = next(w for w in descendants(window.page) if w.get_name() == "ari-retry-models")
+            retry.emit("clicked")
+            self.assertTrue(window.models_loading)
+            callback = next(call.kwargs["callback"] for call in reversed(window.daemon.call.call_args_list)
+                            if call.args[0] == "Models")
+            rows = json.loads((ROOT / "src/luma-ari/data/models.json").read_text())["models"]
+            callback((json.dumps({"models": rows, "hardware": {"ram_gb": 16}}),))
+        self.assertEqual(window.models_error, "")
+        self.assertFalse(window.models_loading)
+        get_buttons = [w for w in descendants(window.page) if w.get_name().startswith("ari-get-")]
+        self.assertEqual(len(get_buttons), len(rows))
+        get_buttons[0].emit("clicked")
+        self.assertEqual(window.daemon.call.call_args.args[0], "InstallModel")
+
+    def test_disconnection_invalidates_late_reads_and_owner_recovery_reloads(self):
+        from unittest.mock import Mock
+        window = self.window
+        window.fixture = False
+        window.daemon = Mock()
+        window.data["local_models"] = []
+        with patch.object(lumaui_app, "live_capacity", return_value={}):
+            window._live_ready(None)
+            old = next(call.kwargs["callback"] for call in window.daemon.call.call_args_list
+                       if call.args[0] == "Models")
+            window._live_ready(RuntimeError("Service stopped"))
+            old(("not json",))
+            self.assertEqual(window.models_error, "Service stopped")
+            window._live_ready(None)
+            self.assertTrue(window.models_loading)
+            self.assertEqual(window.models_error, "")
+
 
 if __name__ == "__main__":
     unittest.main()
