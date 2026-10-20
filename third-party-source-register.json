@@ -13668,7 +13668,7 @@
     "scripts/install/atlas-iso/prepare-lorax-boot.py": [
       "LGPL-2.1-or-later"
     ],
-    "scripts/install/atlas-iso/prepare-runtime-clock.py": [
+    "scripts/install/atlas-iso/prepare-runtime-anaconda.py": [
       "GPL-2.0-or-later"
     ],
     "scripts/install/atlas-iso/prepare-runtime-presentation.py": [

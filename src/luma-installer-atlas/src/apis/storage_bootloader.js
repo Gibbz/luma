@@ -21,3 +21,8 @@ const setProperty = (...args) => {
 export const setBootloaderDrive = ({ drive }) => {
     return setProperty("Drive", cockpit.variant("s", drive));
 };
+
+/** Preserve the existing firmware startup order when reusing an EFI partition. */
+export const setBootloaderKeepBootOrder = ({ keepBootOrder }) => {
+    return setProperty("KeepBootOrder", cockpit.variant("b", keepBootOrder));
+};

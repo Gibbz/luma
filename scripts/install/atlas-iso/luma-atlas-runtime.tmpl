@@ -32,4 +32,4 @@ runcmd sh -c "sed -i --follow-symlinks -e 's/^NAME=.*/NAME=\"Luma\"/' -e 's/^PRE
 ## The installer must use the same verified Luma boot renderer as its payload.
 runcmd python3 /s/verify-runtime-boot.py '${root}' /w/boot-packages.manifest
 runcmd python3 /s/prepare-runtime-presentation.py '${root}'
-runcmd python3 /s/prepare-runtime-clock.py '${root}'
+runcmd python3 /s/prepare-runtime-anaconda.py '${root}'

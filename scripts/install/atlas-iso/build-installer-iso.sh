@@ -404,7 +404,7 @@ podman run --rm --privileged --network host --env DRACUT_NO_XATTR=1 \
     grep -Fxq 'ConditionKernelCommandLine=!rhgb' /w/tmp/stage2/usr/lib/systemd/system/\$owner.service.d/50-luma-atlas-handoff.conf
   done
   grep -Fq '_luma_release_boot_splash()' /w/tmp/stage2/usr/lib64/python3.14/site-packages/pyanaconda/display.py
-  python3 /s/prepare-runtime-clock.py --verify /w/tmp/stage2
+  python3 /s/prepare-runtime-anaconda.py --verify /w/tmp/stage2
   test -s /w/tmp/stage2/usr/share/anaconda/window-manager/glib-2.0/schemas/gschemas.compiled
   grep -Fq 'plymouthd --mode=reboot' /w/tmp/stage2/usr/lib/systemd/system/plymouth-reboot.service
   test \"\$(readlink /w/tmp/stage2/usr/lib/systemd/system/reboot.target.wants/plymouth-reboot.service)\" = ../plymouth-reboot.service
