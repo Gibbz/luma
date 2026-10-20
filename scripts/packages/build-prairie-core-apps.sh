@@ -65,6 +65,7 @@ install -m 0644 "$repo_root/tests/unit/test_prairie_photos_backend.py" \
   "$source_dir/tests/test_prairie_photos_backend.py"
 tar -C "$work_dir" -czf "$rpmbuild_dir/SOURCES/prairie-core-apps.tar.gz" \
   prairie-core-apps
+install -m 0644 "$repo_root/tests/fixtures/messages-v70.json" "$rpmbuild_dir/SOURCES/"
 install -m 0644 "$repo_root/LICENSE.md" "$rpmbuild_dir/SOURCES/LICENSE.md"
 # The runtime theme gate uses the exact production schema on a private backend.
 install -m 0644 "$repo_root/src/luma-shell-state/org.project_luma.shell-state.gschema.xml" \

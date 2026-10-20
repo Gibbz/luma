@@ -23,7 +23,7 @@ from luma_search.contract import (  # noqa: E402
     rank_results,
 )
 from luma_search.files import FileIndex, path_to_uri, uri_to_path  # noqa: E402
-from luma_search import places, ranking  # noqa: E402
+from luma_search import depot, places, ranking  # noqa: E402
 from luma_search.providers import Provider, discover_providers, kind_from_categories  # noqa: E402
 
 
@@ -110,6 +110,7 @@ class SearchService:
                 if self._privacy_settings else -1
             ),
         )
+        self._depot = depot.Provider(self._provider_pool, self._touch_idle)
         self._settings_pages = self._load_settings_pages()
         self._places_table = places.load_table(PLACES_PATHS)
         self._reload_policy()
@@ -133,6 +134,7 @@ class SearchService:
 
     def _on_bus_acquired(self, connection: Gio.DBusConnection, _name: str) -> None:
         self._connection = connection
+        self._depot.register(connection)
         connection.register_object(
             OBJECT_PATH,
             self._node.interfaces[0],

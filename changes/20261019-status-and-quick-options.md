@@ -1,1 +1,8 @@
-Keep the full AM/PM clock label visible, preserve background application artwork and readable names, and simplify the background-apps popover. Remove small-control alpha masks and improve Quick Options disclosure insets and network-list spacing.
+---
+type: fix
+component: Desktop
+packages: [gnome-shell, gnome-shell-common]
+highlight: true
+---
+Summary: Fixed clock clipping and Quick Options styling
+Details: Improved background app icons, rounded controls and network list spacing.

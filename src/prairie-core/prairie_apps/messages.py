@@ -1054,6 +1054,7 @@ class MessagesWindow(AppWindow):
         composer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6, valign=Gtk.Align.END); composer.add_css_class("messages-composer")
         attach = _icon_button("attach", "Add attachment", "messages-composer-button"); attach.connect("clicked", self._attachment_requested); composer.append(attach)
         self.composer_view = Gtk.TextView(wrap_mode=Gtk.WrapMode.WORD_CHAR, accepts_tab=False, hexpand=True); self.composer_view.add_css_class("messages-composer-input")
+        self.composer_view.connect("paste-clipboard", self._paste_image)
         self.composer_view.set_top_margin(8); self.composer_view.set_bottom_margin(8); self.composer_view.set_left_margin(12); self.composer_view.set_right_margin(12)
         _accessible(self.composer_view, "Message"); self.composer_buffer = self.composer_view.get_buffer(); self.composer_buffer.connect("changed", self._composer_changed)
         self.composer_view.connect("preedit-changed", self._composer_preedit_changed)
@@ -2845,32 +2846,74 @@ class MessagesWindow(AppWindow):
         if not self.current_address:
             return
         picker = Gtk.FileDialog(title="Add attachment")
+        service, address = self.service, self.current_address
 
         def selected(dialog, result):
             try:
                 file = dialog.open_finish(result)
                 if file and file.get_path():
-                    self._stage_attachment(Path(file.get_path()))
+                    self._stage_attachment(Path(file.get_path()), service=service, address=address)
+                elif file:
+                    self._notice("The attachment could not be opened.")
             except GLib.Error as error:
                 if not error.matches(Gtk.DialogError.quark(), Gtk.DialogError.DISMISSED):
                     self._notice("The attachment could not be opened.")
         picker.open(self, None, selected)
 
-    def _stage_attachment(self, path: Path) -> None:
-        if not self.current_address:
+    def _paste_image(self, view: Gtk.TextView) -> None:
+        clipboard = view.get_clipboard()
+        formats = clipboard.get_formats()
+        if not self.current_address or not (any(GObject.type_is_a(kind, Gdk.Texture) for kind in formats.get_gtypes()) or
+                                            any(formats.contain_mime_type(mime) for mime in
+                                                ("image/png", "image/jpeg", "image/webp"))):
             return
-        address = self.current_address
-        service = self.service
+        GObject.signal_stop_emission_by_name(view, "paste-clipboard")
+        service, address = self.service, self.current_address
+
+        def loaded(source, result):
+            if self.closed:
+                return
+            temporary = None
+            try:
+                texture = source.read_texture_finish(result)
+                if texture is None:
+                    raise ValueError("The clipboard image could not be opened.")
+                descriptor, filename = tempfile.mkstemp(prefix="luma-message-", suffix=".png")
+                os.close(descriptor)
+                temporary = Path(filename)
+                if not texture.save_to_png(filename):
+                    raise ValueError("The clipboard image could not be attached.")
+                self._stage_attachment(temporary, service=service, address=address, remove_source=True)
+                temporary = None
+            except (GLib.Error, OSError, ValueError) as error:
+                self._notice(str(error))
+            finally:
+                if temporary is not None:
+                    temporary.unlink(missing_ok=True)
+        clipboard.read_texture_async(None, loaded)
+
+    def _stage_attachment(self, path: Path, *, service=None, address: str | None = None,
+                          remove_source: bool = False) -> None:
+        if not (address or self.current_address):
+            if remove_source:
+                path.unlink(missing_ok=True)
+            return
+        address = address or self.current_address
+        service = service or self.service
 
         def copied():
-            writer = service.writer()
+            writer = None
             error = ""
             try:
+                writer = service.writer()
                 writer.attach_file(address, path)
-            except (OSError, ValueError) as failure:
+            except (GLib.Error, OSError, ValueError, RuntimeError) as failure:
                 error = str(failure)
             finally:
-                writer.close()
+                if writer is not None:
+                    writer.close()
+                if remove_source:
+                    path.unlink(missing_ok=True)
             GLib.idle_add(self._attachment_staged, service, address, error)
         self.content_worker.submit(copied)
 
@@ -3151,12 +3194,16 @@ class MessagesWindow(AppWindow):
         if self.foot.filter_button is not None:
             self.foot.filter_button.set_sensitive(not showing)
         _accessible(self.luma_requests_button, f"Message requests, {requests}")
+        ready = self._refresh_luma_identity()
+        self.luma_banner.set_visible(bool(ready and self._luma_identity is not None and not self._luma_identity.get("handle")))
+
+    def _refresh_luma_identity(self) -> bool:
         service = self._luma_service()
         ready = service is not None and service.provider.status.get("state") == "ready"
         if ready and not self._luma_identity_asked:
             self._luma_identity_asked = True
             self.luma_call(service, "luma.identity", {}, self._luma_identity_loaded)
-        self.luma_banner.set_visible(bool(ready and self._luma_identity is not None and not self._luma_identity.get("handle")))
+        return ready
 
     def _luma_identity_loaded(self, result, error) -> None:
         if error is not None:

@@ -45,10 +45,13 @@ for source in __init__.py contract.py providers.py ranking.py files.py places.py
 done
 install -m 0644 "$repo_root/LICENSE.md" "$rpmbuild_dir/SOURCES/LICENSE.md"
 install -m 0644 "$repo_root/tests/unit/test_luma_search.py" "$rpmbuild_dir/SOURCES/"
+install -m 0644 "$repo_root/tests/search/test_depot_results.py" "$rpmbuild_dir/SOURCES/"
 install -m 0644 "$repo_root/tests/search/test_ranking_vectors.py" "$rpmbuild_dir/SOURCES/"
 install -m 0644 "$repo_root/tests/search/ranking-vectors.json" "$rpmbuild_dir/SOURCES/"
 install -m 0644 "$repo_root/tests/search/settings-cases.json" "$rpmbuild_dir/SOURCES/"
 install -m 0644 "$repo_root/src/luma-search/settings-pages.json" "$rpmbuild_dir/SOURCES/"
+install -m 0644 "$repo_root/src/luma-search/luma_search/depot.py" "$rpmbuild_dir/SOURCES/"
+install -m 0644 "$repo_root/src/luma-search/org.projectluma.Depot.search-provider.ini" "$rpmbuild_dir/SOURCES/"
 install -m 0644 "$repo_root/src/luma-search/filer-places.json" "$rpmbuild_dir/SOURCES/"
 install -m 0644 "$repo_root/packaging/rpm/luma-search.spec" "$rpmbuild_dir/SPECS/"
 
@@ -96,6 +99,8 @@ install -m 0644 "$repo_root/packaging/rpm/luma-search.spec" "$rpmbuild_dir/SPECS
   grep -Fq "_query_settings_pages" usr/libexec/luma-search-service
   test -f usr/share/glib-2.0/schemas/50_luma-search-localsearch.gschema.override
   grep -Fq "_query_files" usr/libexec/luma-search-service
+  test -f usr/libexec/luma_search/depot.py
+  test -f usr/share/gnome-shell/search-providers/org.projectluma.Depot.search-provider.ini
   test -f usr/libexec/luma_search/places.py
   python3 -c "import json,sys; t=json.load(open(sys.argv[1])); ids={p[\"id\"] for p in t[\"places\"]}; sys.exit(0 if {\"applications\",\"trash\",\"home\"} <= ids and len(ids) >= 13 else 1)" usr/share/luma-search/filer-places.json
   grep -Fq "_query_places" usr/libexec/luma-search-service

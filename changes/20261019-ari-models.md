@@ -1,1 +1,8 @@
-Ari’s local model catalogue no longer waits for online cloud discovery. Models shows loading and retry states, restores its catalogue after a host-service restart, and retains available model controls while the service is idle.
+---
+type: fix
+component: Ari
+packages: [luma-ari]
+highlight: true
+---
+Summary: Fixed the empty model download list
+Details: Added loading, retry and service reconnection handling.

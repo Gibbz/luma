@@ -222,7 +222,7 @@ def main() -> None:
         drain()
         GLib.source_remove(timer)
         results["search_stall"] = max(gaps) if gaps else 0.0
-        assert window.view == 'songs' and window.trail.current.title == 'Results'
+        assert window.view == 'search' and window.trail.current.title == 'Search results'
         assert all('song 1' in row.song.title.casefold() for row in window._rows)
         assert len(window._rows) < 100
         window.search_item.entry.set_text('')

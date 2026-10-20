@@ -1,0 +1,105 @@
+--- a/components/tilingsystem/resizeManager.js
++++ b/components/tilingsystem/resizeManager.js
+@@ -17,7 +17,18 @@
+       "grab-op-begin",
+       (_display, window, grabOp) => {
+         const moving = grabOp === Meta.GrabOp.KEYBOARD_MOVING || grabOp === Meta.GrabOp.MOVING;
+-        if (moving || !Settings.RESIZE_COMPLEMENTING_WINDOWS) return;
++        if (moving) return;
++        const operation = grabOp & ~1024;
++        const resizing = Object.entries(Meta.GrabOp).some(([name, value]) =>
++          name.includes("RESIZING") && value === operation);
++        if (!resizing) return;
++        if (!Settings.RESIZE_COMPLEMENTING_WINDOWS) {
++          if (window?.assignedTile) {
++            window.assignedTile = void 0;
++            delete window.originalSize;
++          }
++          return;
++        }
+         this._onWindowResizingBegin(window, grabOp & ~1024);
+       }
+     );
+--- a/components/tilingsystem/tilingManager.js
++++ b/components/tilingsystem/tilingManager.js
+@@ -56,12 +56,10 @@
+ export function lumaPublishMaximizeInsets(monitorIndex) {
+   const display = global.display;
+   if (typeof display?.set_maximize_inset !== "function") return false;
+-  const outer = lumaOuterGaps(monitorIndex);
++  // Shell owns desktop spacing. Tile gaps must not add a second border.
+   try {
+-    display.set_maximize_inset(monitorIndex, Meta.Side.TOP, Math.round(outer.top));
+-    display.set_maximize_inset(monitorIndex, Meta.Side.BOTTOM, Math.round(outer.bottom));
+-    display.set_maximize_inset(monitorIndex, Meta.Side.LEFT, Math.round(outer.left));
+-    display.set_maximize_inset(monitorIndex, Meta.Side.RIGHT, Math.round(outer.right));
++    for (const side of [Meta.Side.TOP, Meta.Side.BOTTOM, Meta.Side.LEFT, Meta.Side.RIGHT])
++      display.set_maximize_inset(monitorIndex, side, 0);
+   } catch (e) {
+     lumaTilingVitals("maximize-inset-refused", `monitor ${monitorIndex}: ${e}`, { monitor: monitorIndex });
+     return false;
+@@ -224,6 +222,7 @@
+       this._workspaceTilingLayout.forEach(
+         (tilingLayout) => tilingLayout.relayout({ innerGaps })
+       );
++      this._lumaReflowTiles(null, true);
+     });
+     this._signals.connect(Settings, Settings.KEY_OUTER_GAPS, () => {
+       const outerGaps = lumaOuterGaps(this._monitor.index);
+@@ -231,13 +230,19 @@
+         (tilingLayout) => tilingLayout.relayout({ outerGaps })
+       );
+       lumaPublishMaximizeInsets(this._monitor.index);
++      this._lumaReflowTiles(null, true);
+     });
+     this._signals.connect(
+       global.display,
+       "grab-op-begin",
+       (_display, window, grabOp) => {
+         const moving = (grabOp & ~1024) === 1;
+-        if (!moving) return;
++        if (!moving) {
++          const operation = grabOp & ~1024;
++          if (Object.entries(Meta.GrabOp).some(([name, value]) => name.includes("RESIZING") && value === operation))
++            this._lumaReleaseTile(window);
++          return;
++        }
+         this._onWindowGrabBegin(window, grabOp);
+       }
+     );
+@@ -536,9 +541,9 @@
+       return GLib.SOURCE_REMOVE;
+     });
+   }
+-  _lumaReflowTiles(motion = null) {
++  _lumaReflowTiles(motion = null, spacingChanged = false) {
+     const area = this._workArea;
+-    const key = `${area.x},${area.y},${area.width},${area.height}`;
++    const key = `${area.x},${area.y},${area.width},${area.height}:${Settings.get_inner_gaps().top}:${Settings.get_outer_gaps().top}`;
+     const now = GLib.get_monotonic_time() / 1e3;
+     for (const actor of global.get_window_actors()) {
+       const window = actor.metaWindow;
+@@ -552,7 +557,7 @@
+       if (!layout)
+         continue;
+       window._lumaReflowMoves = (window._lumaReflowMoves ?? []).filter((t) => now - t < LUMA_REFLOW_WINDOW);
+-      if (window._lumaReflowMoves.length >= LUMA_REFLOW_BURST) {
++      if (!spacingChanged && window._lumaReflowMoves.length >= LUMA_REFLOW_BURST) {
+         if (!window._lumaReflowStopped) {
+           window._lumaReflowStopped = true;
+           lumaTilingVitals("reflow-stopped", `stopped re-tiling "${window.title}": moved ${window._lumaReflowMoves.length} times in ${LUMA_REFLOW_WINDOW} ms`, { title: window.title, monitor: this._monitor.index });
+@@ -566,12 +571,12 @@
+       const before = window.get_frame_rect();
+       if (dest.width <= 0 || dest.height <= 0 || before.equal(dest))
+         continue;
+-      window._lumaReflowMoves.push(now);
++      if (!spacingChanged) window._lumaReflowMoves.push(now);
+       // One continuous glide of the window's frame, no fade, on the Dash's
+       // curve (Luma Shell); never move_to_monitor: a window stays on its
+       // tile's monitor.
+       if (Main.wm.lumaGlideFrame) {
+-        Main.wm.lumaGlideFrame(window, dest, motion ? { duration: motion.duration, mode: motion.mode } : {});
++        Main.wm.lumaGlideFrame(window, dest, spacingChanged ? { duration: 0 } : motion ? { duration: motion.duration, mode: motion.mode } : {});
+       } else {
+         const windowActor = window.get_compositor_private();
+         windowActor.remove_all_transitions();

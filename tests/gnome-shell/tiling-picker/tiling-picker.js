@@ -74,7 +74,7 @@ async function work() {
         const previews = descend(tiling.menu.actor ?? tiling.menu.box).filter(a => a.has_style_class_name?.('luma-tiling-preview'));
         const shown = previews.filter(p => p.get_stage() && p.mapped && p.visible && p.width > 10 && p.height > 10);
         const labels = descend(tiling.menu.actor ?? tiling.menu.box).filter(a => a.has_style_class_name?.('luma-tiling-display-name'));
-        check(`${mode}: a thumbnail per layout per display is on the stage`, previews.length > 0 && shown.length === previews.length,
+        check(`${mode}: the bounded layout gallery is on the stage`, previews.length > 0 && previews.length <= 6 && shown.length === previews.length,
             `${shown.length}/${previews.length} shown under ${labels.length} display headings`);
         if (!shown.length) { tiling.menu.close(); quick.menu.close(); continue; }
         const first = shown[0];
@@ -94,6 +94,19 @@ async function work() {
             `worst ${worst.toFixed(2)}:1 on ${owner}; ${worstDetail}; ancestors ${ancestors.join(' < ')}`);
         const chosen = shown.filter(p => p.checked);
         check(`${mode}: the current layout is marked`, chosen.length >= 1, `${chosen.length} checked`);
+        const grid = tiling._layoutsBox.get_transformed_extents();
+        const lastPreviewBottom = Math.max(...shown.map(p => {
+            const e = p.get_transformed_extents(); return e.get_y() + e.get_height();
+        }));
+        const actions = [tiling._editLayoutsItem, tiling._newLayoutItem];
+        check(`${mode}: grid reserves space for every monitor's tiles`,
+            grid.get_y() + grid.get_height() >= lastPreviewBottom);
+        for (const action of actions) {
+            const e = action.get_transformed_extents();
+            check(`${mode}: ${action.label.text} is below the last thumbnail`,
+                e.get_y() >= lastPreviewBottom && e.get_height() >= 24,
+                `row y=${e.get_y()} height=${e.get_height()} grid bottom=${lastPreviewBottom}`);
+        }
         await shot(`picker-${mode}`, tiling.menu.box);
         // A click selects: pick an unchecked thumbnail on the first display.
         const target = shown.find(p => !p.checked);

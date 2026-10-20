@@ -49,4 +49,14 @@ void luma_navigation_row_set_meta(LumaNavigationRow *self, const char *meta);
 void luma_navigation_row_set_lead(LumaNavigationRow *self, GtkWidget *lead);
 void luma_navigation_row_set_trail(LumaNavigationRow *self, GtkWidget *trail);
 
+/**
+ * luma_navigation_sidebar_set_footer_fade:
+ * @self: a sidebar
+ * @enabled: fade overflowing content above a fixed footer
+ *
+ * Enabled by default. The footer remains fully opaque; the fade disappears
+ * when the final row is scrolled into view so it stays readable.
+ */
+void luma_navigation_sidebar_set_footer_fade(LumaNavigationSidebar *self, gboolean enabled);
+
 G_END_DECLS

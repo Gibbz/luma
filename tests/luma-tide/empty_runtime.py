@@ -59,15 +59,15 @@ with test_application('org.projectluma.TideEmptyTest') as (app, root):
 
     window.open_search()
     window.search_item.entry.set_text('no such song')
-    settle(lambda: window.query == 'no such song' and window.view == 'songs' and not window._rows)
+    settle(lambda: window.query == 'no such song' and window.view == 'search' and not window._rows)
     assert window.search.get_visible() and count(window) == 1
-    assert window.trail.current.title == 'Results'
+    assert window.trail.current.title == 'Search results'
     window.search_item.entry.set_text('test')
     settle(lambda: len(window._rows) == 1)
     assert window._rows[0].song.id == track.id
     window.search_item.entry.set_text('')
-    settle(lambda: window.query == '' and len(window._rows) == 1)
-    assert window.view == 'songs' and window.trail.current.title == 'Songs'
+    settle(lambda: window.query == '' and not window._rows)
+    assert window.view == 'search' and window.trail.current.title == 'Search results'
     window.show_view('albums')
     assert window.view == 'albums'
 

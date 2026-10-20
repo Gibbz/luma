@@ -30,7 +30,7 @@ def named(w,name):
   c=c.get_next_sibling()
 app=Adw.Application(application_id='org.projectluma.TidePolishTest',flags=Gio.ApplicationFlags.NON_UNIQUE);assert app.register(None)
 install_appkit();install_lumaui();add_style_sheet(str(package_root / 'data/tide.css'))
-w=TideWindow(app,FixtureLibrary(package_root / 'fixtures/tide-v70.json'));w.set_default_size(390,874);w.present();settle()
+w=TideWindow(app,FixtureLibrary(package_root / 'fixtures/tide-v70.json' if (package_root / 'fixtures/tide-v70.json').exists() else package_root.parents[1] / 'tests/fixtures/tide-v70.json'));w.set_default_size(390,874);w.present();settle()
 for width in (1180, 1024, 720, 560):
  w.set_size_request(width,874);w.set_default_size(width,874);xdo('windowsize','--sync',window_id(w),str(width+10),'884');settle();assert w.get_width()==width,(width,w.get_width())
  if w.pane.shown:w.pane.close();settle()
@@ -65,7 +65,7 @@ for width in (1180, 1024, 720, 560):
   original=w.view
   w.open_search();settle();assert w.modes.get_visible() and w.search.get_mapped() and w.view==original
   w.search_item.entry.set_text('love');settle()
-  assert w.query=='love' and w.view=='songs' and len(w._rows)==2,(w.query,w.view,len(w._rows))
+  assert w.query=='love' and w.view=='search' and len(w._rows)==2,(w.query,w.view,len(w._rows))
   w.close_search();settle()
   w.open_now_playing();settle();assert not w.deck.sleeve.get_visible()
   assert w.deck.inner.get_margin_start()==28

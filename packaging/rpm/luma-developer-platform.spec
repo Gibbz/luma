@@ -4,7 +4,7 @@
 
 Name:           luma-developer-platform
 Version:        0.1.0
-Release:        1.luma.107.creator20261007.1%{?dist}
+Release:        1.luma.108.creator20261012.1%{?dist}
 Summary:        Adaptive and semantic application platform for Project Luma
 License:        Apache-2.0
 URL:            https://projectluma.org/developers
@@ -240,7 +240,7 @@ LUMA_APPKIT_BASE_PATH="$PWD/appkit/luma-appkit-base.css" \
 LUMA_APPKIT_STYLE_PATH="$PWD/appkit/luma-appkit.css" \
 LUMA_APPKIT_TOKENS_PATH="$PWD/appkit/luma-appkit-tokens.css" \
 xvfb-run -a dbus-run-session -- env GSK_RENDERER=cairo \
-  python3 tests/navigation_sidebar.py
+  bash -c 'python3 tests/navigation_sidebar.py && python3 tests/sidebar_footer_fade.py'
 # The save changes sheet: real key presses through the X server, so the
 # application's own Ctrl+D (accelerator and key handlers) is proven silent
 # while the sheet is open; the three cases, focus, Tab, inline name errors.

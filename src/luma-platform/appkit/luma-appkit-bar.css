@@ -891,12 +891,16 @@ label.lumaui-bar-readout-note { font-size: var(--lumaui-bar-readout-note-size); 
 .lumaui-action-center.phone label.lumaui-bar-readout-primary { font-size: var(--lumaui-bar-readout-phone-primary-size); color: @luma_ink; }
 box.lumaui-bar-readout.media label.lumaui-bar-readout-primary { color: @luma_on_media; }
 box.lumaui-bar-readout.media label.lumaui-bar-readout-secondary { color: @luma_media_ink_secondary; }
-/* v71 Tide .tflo .srch: the shared search well inside an island corner. */
+/* Corner search uses the same recessed material as other search fields. */
 entry.lumaui-bar-search.in-corner {
   border-radius: var(--lumaui-corner-search-radius);
-  background: @luma_control_fill; box-shadow: none;
+  background: @luma_well;
+  box-shadow: inset 0 0 0 1px @luma_well_ring, inset 0 1px 2px @luma_well_shade, 0 1px 0 @luma_well_lip;
 }
-entry.lumaui-bar-search.in-corner:focus-visible { box-shadow: 0 0 0 var(--lumaui-bar-search-focus-ring) @luma_focus_ring; }
+entry.lumaui-bar-search.in-corner:focus-within {
+  box-shadow: inset 0 0 0 1px @luma_well_ring, inset 0 1px 2px @luma_well_shade,
+              0 0 0 var(--lumaui-bar-search-focus-ring) @luma_focus_ring;
+}
 entry.lumaui-bar-search.in-corner button.lumaui-bar-search-clear {
   min-width: var(--lumaui-corner-search-clear); min-height: var(--lumaui-corner-search-clear);
   border-radius: var(--lumaui-corner-search-clear-radius); background: none;

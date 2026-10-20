@@ -1,1 +1,8 @@
-Cache the Applications catalogue and hide file metadata columns in its list view.
+---
+type: fix
+component: Filer
+packages: [nautilus, nautilus-extensions]
+highlight: true
+---
+Summary: Improved Applications loading
+Details: Hide file metadata columns in the Applications list.

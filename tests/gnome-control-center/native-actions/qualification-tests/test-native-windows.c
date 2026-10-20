@@ -38,5 +38,29 @@ int main(void){
  g_assert_true(g_settings_set_boolean(w->shell,"disable-user-extensions",FALSE));settle();g_assert_true(tiling_on(w));
  refused=TRUE;g_autoptr(JsonNode) off=json_node_init_boolean(json_node_alloc(),FALSE);g_assert_true(cc_luma_fixture_write(m,"tile",off,&error));settle();g_assert_true(tiling_on(w));g_assert_cmpuint(errors,==,1);
  g_autoptr(JsonNode) invalid=json_node_init_int(json_node_alloc(),-1);g_assert_false(cc_luma_fixture_write(m,"gap",invalid,&error));g_assert_error(error,G_IO_ERROR,G_IO_ERROR_INVALID_ARGUMENT);g_clear_error(&error);
+ g_assert_nonnull(w->border);
+ g_assert_true(cc_luma_fixture_key_verified(m, "windowBorder"));
+ g_assert_true(cc_luma_fixture_key_verified(m, "windowBorderSize"));
+ g_assert_cmpint(json_node_get_int(cc_luma_fixture_get(m, "windowBorderSize")), ==, 14);
+ g_assert_true(g_settings_set_int(w->border, "shelf-padding", 20));
+ settle();
+ g_assert_cmpint(json_node_get_int(cc_luma_fixture_get(m, "windowBorderSize")), ==, 20);
+ g_autoptr(JsonNode) size = json_node_init_int(json_node_alloc(), 32);
+ g_assert_true(cc_luma_fixture_write(m, "windowBorderSize", size, &error));
+ g_assert_cmpint(g_settings_get_int(w->border, "window-border-size"), ==, 32);
+ g_assert_true(cc_luma_fixture_write(m, "windowBorder", off, &error));
+ g_assert_false(g_settings_get_boolean(w->border, "window-border-enabled"));
+ windows_stop(w); w = windows_start(m); cc_luma_fixture_set_writer(m, writer, w);
+ g_assert_false(json_node_get_boolean(cc_luma_fixture_get(m, "windowBorder")));
+ g_assert_cmpint(json_node_get_int(cc_luma_fixture_get(m, "windowBorderSize")), ==, 32);
+ g_assert_true(g_settings_set_int(w->border, "shelf-padding", 24));
+ settle();
+ g_assert_cmpint(json_node_get_int(cc_luma_fixture_get(m, "windowBorderSize")), ==, 32);
+ g_assert_true(cc_luma_fixture_write(m, "windowBorder", on, &error));
+ for (int bad = 0; bad <= 65; bad += 65) {
+   g_autoptr(JsonNode) value = json_node_init_int(json_node_alloc(), bad);
+   g_assert_false(cc_luma_fixture_write(m, "windowBorderSize", value, &error));
+   g_assert_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT); g_clear_error(&error);
+ }
  windows_stop(w);settle();g_print("PASS native tiling Shell call, gap/edges GSettings, reopen, global-pause refusal without changing user pause, refused Shell response and invalid gap; %u calls\n",calls);return 0;
 }

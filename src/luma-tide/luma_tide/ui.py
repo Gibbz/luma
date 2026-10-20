@@ -609,11 +609,9 @@ class TideWindow(AppWindow):
         self._album_hero = hero
         self._fit_album_hero(hero, 0 < self.layer.get_width() <= 720)
         self.light.set_source(hues=album.hues, name=album.title)
-        def light_artwork(texture):
-            if self.view == 'album' and self.album_id == album.id and not self.now_tab:
-                self.light.set_source(picture=texture, hue=album.hues[0] if album.hues else None,
-                                      name=album.title)
-        cover = named(CoverSlot(AlbumCover(album, 264, on_loaded=light_artwork, flexible=True), 264, flexible=True), 'td-hero-cover')
+        cover = named(CoverSlot(AlbumCover(album, 264,
+            on_loaded=lambda texture: self._album_artwork_light(album, texture),
+            flexible=True), 264, flexible=True), 'td-hero-cover')
         hero.append(cover)
         words = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, valign=Gtk.Align.END, hexpand=True)
         trail = NavigationTrailBar(self.trail, title=False) if self.trail.can_go_back else text('Album', 'small', weight=600, muted=True)
@@ -760,6 +758,11 @@ class TideWindow(AppWindow):
         recent.append(self._album_strip(self.library.albums[:8], name='td-recent'))
         pad.append(recent)
 
+    def _album_artwork_light(self, album, texture):
+        if self.view == 'album' and self.album_id == album.id and not self.now_tab:
+            from .ui_parts import artwork_hues
+            self.light.set_source(picture=texture, hues=artwork_hues(texture), tone='media')
+
     def _phone_album_page(self, album):
         """v71 `.tnarrow .hero`: the sleeve centred, the name, the artist, then Play and Shuffle side by side.
 
@@ -770,7 +773,8 @@ class TideWindow(AppWindow):
         hero = named(Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18, halign=Gtk.Align.FILL,
                              margin_top=76, margin_start=24, margin_end=24, margin_bottom=8), 'td-hero')
         side = min(248, int(self.get_width() * .64)) if self.get_width() > 0 else 248
-        cover = named(AlbumCover(album, side, fill=False), 'td-hero-cover')
+        cover = named(AlbumCover(album, side, fill=False,
+            on_loaded=lambda texture: self._album_artwork_light(album, texture)), 'td-hero-cover')
         cover.set_halign(Gtk.Align.CENTER)
         hero.append(cover)
         words = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, halign=Gtk.Align.FILL)
@@ -1370,9 +1374,9 @@ class TideWindow(AppWindow):
         if self._closed:
             return GLib.SOURCE_REMOVE
         self.query = self.search_item.text
-        if self.view != 'songs':
-            self.trail.replace(Place('songs', 'Results'))
-            self.view = 'songs'
+        if self.view != 'search':
+            self.trail.replace(Place('search', 'Results'))
+            self.view = 'search'
             self.now_tab = None
         self._render()
         self.scroll.get_vadjustment().set_value(0)

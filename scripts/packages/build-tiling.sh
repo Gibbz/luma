@@ -64,6 +64,7 @@ install -m 0644 "$repo_root/extensions/luma-tiling-toggle/stylesheet.css" \
 install -m 0644 "$repo_root/extensions/luma-tiling-toggle/verify-ink.py" \
   "$rpmbuild_dir/SOURCES/verify-ink.py"
 install -m 0644 "$repo_root/LICENSE.md" "$rpmbuild_dir/SOURCES/LICENSE.md"
+install -m 0644 "$repo_root/patches/tiling-shell/0018-independent-window-spacing-and-resize.patch" "$rpmbuild_dir/SOURCES/"
 install -m 0644 "$repo_root/patches/tiling-shell/90_luma-tiling-shell.gschema.override" \
   "$rpmbuild_dir/SOURCES/"
 install -m 0644 "$repo_root/packaging/rpm/gnome-shell-extension-tiling-shell.spec" \
@@ -110,6 +111,11 @@ install -m 0644 \
 install -m 0644 \
   "$repo_root/patches/tiling-shell/0016-luma-windows-open-straight-into-their-tile.patch" \
   "$rpmbuild_dir/SOURCES/"
+install -m 0644 \
+  "$repo_root/patches/tiling-shell/0017-luma-floating-zone-editor-actions.patch" \
+  "$rpmbuild_dir/SOURCES/"
+install -m 0644 "$repo_root/tests/tiling-shell/editor/state.mjs" \
+  "$rpmbuild_dir/SOURCES/editor-state.mjs"
 install -m 0644 "$repo_root/packaging/rpm/gnome-shell-extension-luma-tiling-toggle.spec" \
   "$rpmbuild_dir/SPECS/"
 
@@ -198,14 +204,16 @@ install -m 0644 "$repo_root/packaging/rpm/gnome-shell-extension-luma-tiling-togg
     ! grep -Fq "rgba(255,255,255,0.52)" "$toggle_js"
   '
 
+# Each build has a unique work directory. Copy the artifacts produced by its
+# specs; accepted image pins can lag a locally qualified component candidate.
 stable_rpms="$output_dir/RPMS/noarch"
 stable_srpms="$output_dir/SRPMS"
 install -d -m 0755 "$stable_rpms" "$stable_srpms"
 install -m 0644 \
-  "$rpmbuild_dir/RPMS/noarch/gnome-shell-extension-tiling-shell-${TILING_SHELL_VERSION}-${TILING_SHELL_RELEASE}.fc44.noarch.rpm" \
+  "$rpmbuild_dir"/RPMS/noarch/gnome-shell-extension-tiling-shell-*.rpm \
   "$stable_rpms/"
 install -m 0644 \
-  "$rpmbuild_dir/RPMS/noarch/gnome-shell-extension-luma-tiling-toggle-${LUMA_TILING_TOGGLE_VERSION}-${LUMA_TILING_TOGGLE_RELEASE}.fc44.noarch.rpm" \
+  "$rpmbuild_dir"/RPMS/noarch/gnome-shell-extension-luma-tiling-toggle-*.rpm \
   "$stable_rpms/"
 install -m 0644 "$rpmbuild_dir"/SRPMS/gnome-shell-extension-tiling-shell-*.src.rpm \
   "$stable_srpms/"
