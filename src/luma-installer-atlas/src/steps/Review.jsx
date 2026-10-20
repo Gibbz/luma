@@ -160,6 +160,7 @@ export const ReviewStep = ({ answers, back, dispatch, go, index, next, panelRef 
         storageScenarioId && { key: "method", onEdit: () => go(2), term: "Method", value: METHOD_NAMES[storageScenarioId] },
         { key: "locked", onEdit: () => go(3), term: "Locked", value: lockedValue },
         { key: "layout", onEdit: () => go(storageScenarioId === "mount-point-mapping" ? 3 : 2), term: "Layout", value: layout },
+        storageScenarioId === "mount-point-mapping" && typeof answers.manualKeepBootOrder === "boolean" && { key: "startup", onEdit: () => go(3), term: "Startup", value: answers.manualKeepBootOrder ? "Keep the current default" : "Start Luma by default" },
         { key: "apps", onEdit: () => go(5), term: "Apps", value: reviewAppsText(catalog, answers.collections || []) },
         { key: "account", onEdit: () => go(4), term: "Account", value: `${account.fullName ? `${account.fullName} · ` : ""}${account.userName}${answers.autologin ? " · signs in automatically" : ""}` },
     ].filter(Boolean);

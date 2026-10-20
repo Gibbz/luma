@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""Preserve the trusted image clock floor at native installer boundaries.
+"""Prepare pinned native installer clock and initial EFI deployment boundaries.
 
 Only Lorax's disposable installer runtime is patched. The exact Fedora 44.30
 source is required; unrelated initialization and the installed OS stay upstream.
@@ -26,6 +26,37 @@ RESTORE = '''def _luma_restore_clock_floor():
             raise RuntimeError("System clock remains below the installer clock floor")
         log.info("System time advanced to installer clock floor: %s UTC",
                  time.asctime(time.gmtime(floor)))
+
+
+'''
+
+
+INITIAL_EFI_DEPLOY = '''def _luma_initial_efi_deploy(physroot, argv):
+    # During initial deployment Anaconda has not bound /dev into the checkout
+    # or copied Luma's own bootloader files yet. Auto-detection can mistake an
+    # existing EFI/ubuntu/grub.cfg for ours, invoke grub2-probe too early and,
+    # if it succeeds, overwrite the other system's configuration. Defer only
+    # this first deployment's bootloader write; Anaconda configures our loader
+    # and kernel arguments after preparing the deployment's mount targets.
+    if not STORAGE.get_proxy(BOOTLOADER).IsEFI():
+        return safe_exec_program("ostree", argv)
+
+    config_args = ["config", "--repo=" + physroot + "/ostree/repo"]
+    key = "sysroot.bootloader"
+    rc, previous = execProgram("ostree", [*config_args, "get", key])
+    if rc not in (0, 1):
+        raise PayloadInstallationError("Could not read the initial OSTree bootloader policy")
+    if rc == 0 and previous.strip() == "none":
+        return safe_exec_program("ostree", argv)
+
+    safe_exec_program("ostree", [*config_args, "set", key, "none"])
+    try:
+        safe_exec_program("ostree", argv)
+    finally:
+        # Restore even when deployment fails. A permanent 'none' would disable
+        # bootloader updates on the installed system.
+        restore = ["set", key, previous.strip()] if rc == 0 else ["unset", key]
+        safe_exec_program("ostree", [*config_args, *restore])
 
 
 '''
@@ -57,6 +88,20 @@ def patched_pull_source(data):
     if text.count(before) != 1:
         raise ValueError("unsupported Anaconda signed-pull boundary")
     text = text.replace(before, "        try:\n            _luma_restore_clock_floor()\n            repo.pull_with_options(self._data.remote,\n", 1)
+    before = "class DeployOSTreeTask(Task):\n"
+    if text.count(before) != 1:
+        raise ValueError("unsupported Anaconda initial deployment owner")
+    text = text.replace(before, INITIAL_EFI_DEPLOY + before, 1)
+    before = '''            log.info("ostree admin deploy starting")
+            safe_exec_program(
+                "ostree",
+'''
+    if text.count(before) != 1:
+        raise ValueError("unsupported Anaconda initial deployment boundary")
+    text = text.replace(before, '''            log.info("ostree admin deploy starting")
+            _luma_initial_efi_deploy(
+                self._physroot,
+''', 1)
     ast.parse(text)
     return text.encode()
 
@@ -78,7 +123,7 @@ def prepare(root):
     patched = [(path, patch(path.read_bytes())) for path, patch in owners(root).values()]
     for path, data in patched:
         path.write_bytes(data)
-    print("Anaconda native RTC initialization and signed pull preserve the installer clock floor")
+    print("Anaconda native clock floor and initial EFI bootloader ownership prepared")
 
 
 def verify(root):
@@ -89,7 +134,7 @@ def verify(root):
         expected = patch((here / "upstream" / references[relative]).read_bytes())
         if path.read_bytes() != expected:
             raise ValueError("Anaconda clock-floor patch missing from final stage 2: " + relative)
-    print("Complete native clock-floor owners verified in final stage 2")
+    print("Complete native clock and EFI deployment owners verified in final stage 2")
 
 
 if __name__ == "__main__":
@@ -98,4 +143,4 @@ if __name__ == "__main__":
     elif len(sys.argv) == 2:
         prepare(Path(sys.argv[1]))
     else:
-        raise SystemExit("usage: prepare-runtime-clock.py [--verify] INSTALLER_ROOT")
+        raise SystemExit("usage: prepare-runtime-anaconda.py [--verify] INSTALLER_ROOT")

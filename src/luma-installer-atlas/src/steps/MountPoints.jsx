@@ -18,6 +18,7 @@ import { gatherRequests, setManualPartitioningRequests } from "../apis/storage_p
 
 import { error as logError } from "../helpers/log.js";
 import { getDeviceAncestors, getDeviceChildren, requestsFromDbus, requestsToDbus } from "../helpers/storage.js";
+import { preserveExistingBootOrder } from "../model/bootloader.js";
 import { formatSize, joinList } from "../model/format.js";
 
 import { StorageContext } from "../contexts/Common.jsx";
@@ -47,6 +48,7 @@ export const MountPoints = ({ answers, back, continueRef, index, invalidateAfter
     const [partitioning, setPartitioning] = useState(answers.manualPath || null);
     const [requests, setRequests] = useState(answers.manualRequests || null);
     const [constraints, setConstraints] = useState([]);
+    const [keepBootOrder, setKeepBootOrder] = useState(typeof answers.manualKeepBootOrder === "boolean" ? answers.manualKeepBootOrder : true);
     const [busy, setBusy] = useState(false);
     const [report, setReport] = useState(null);
     const [failure, setFailure] = useState(null);
@@ -106,6 +108,7 @@ export const MountPoints = ({ answers, back, continueRef, index, invalidateAfter
         }));
     };
 
+    const reusedEfi = preserveExistingBootOrder({ method: "MANUAL", requests: rows });
     const assigned = rows.filter(request => request["mount-point"] || request["format-type"] === "swap" && request.reformat);
     const mounts = assigned.map(request => request["mount-point"]).filter(Boolean);
     const duplicates = mounts.filter((mount, i) => mounts.indexOf(mount) !== i);
@@ -136,11 +139,12 @@ export const MountPoints = ({ answers, back, continueRef, index, invalidateAfter
         setFailure(null);
         try {
             await setManualPartitioningRequests({ partitioning, requests: requestsToDbus(requests) });
-            const result = await applyPlan({ partitioning });
+            const result = await applyPlan({ keepBootOrder: reusedEfi && keepBootOrder, partitioning });
             setReport(result);
             if (!result.errors.length) {
                 setAnswers(current => ({
                     ...current,
+                    manualKeepBootOrder: reusedEfi && keepBootOrder,
                     manualPath: partitioning,
                     manualRequests: requests,
                     partitioningPath: partitioning,
@@ -204,6 +208,20 @@ export const MountPoints = ({ answers, back, continueRef, index, invalidateAfter
                     </div>
                 );
             })}
+            {reusedEfi && (
+                <SwitchRow
+                  checked={keepBootOrder}
+                  id="keep-existing-default"
+                  onChange={keep => {
+                      invalidateAfter(index);
+                      setReport(null);
+                      setKeepBootOrder(keep);
+                      setAnswers(current => ({ ...current, manualKeepBootOrder: keep }));
+                  }}
+                  subtitle="Luma will not replace your current startup selection."
+                  title="Keep the current default operating system"
+                />
+            )}
             {requests && rows.length === 0 && <Note>This drive has no partitions Luma can use. Go back and pick another way.</Note>}
             {problems.length > 0 && <Warn plain={problems.join(" ")} />}
             {report?.errors.length > 0 && (

@@ -10,12 +10,15 @@ import {
 } from "../helpers/storage.js";
 import { _callClient, _getProperty } from "./helpers.js";
 
+import { preserveExistingBootOrder } from "../model/bootloader.js";
+
 import {
     runStorageTask,
     StorageClient,
 } from "./storage.js";
 import {
     setBootloaderDrive,
+    setBootloaderKeepBootOrder,
 } from "./storage_bootloader.js";
 
 const INTERFACE_NAME_STORAGE = "org.fedoraproject.Anaconda.Modules.Storage";
@@ -270,7 +273,7 @@ export const gatherRequests = ({ partitioning }) => {
     ).then(res => res[0]);
 };
 
-export const applyStorage = async ({ devices, luks, onFail, onSuccess, partitioning }) => {
+export const applyStorage = async ({ devices, keepBootOrder = false, luks, onFail, onSuccess, partitioning }) => {
     if (luks?.encrypted !== undefined) {
         await partitioningSetEncrypt({ encrypt: luks.encrypted, partitioning });
     }
@@ -281,6 +284,7 @@ export const applyStorage = async ({ devices, luks, onFail, onSuccess, partition
     const method = await getPartitioningMethod({ partitioning });
     if (method === "MANUAL") {
         const requests = await gatherRequests({ partitioning });
+        await setBootloaderKeepBootOrder({ keepBootOrder: preserveExistingBootOrder({ method, requests, choice: keepBootOrder }) });
         const bootloaderDevice = requests.find(request => bootloaderTypes.includes(request["format-type"].v))?.["device-spec"].v;
         const bootloaderDisk = getDeviceDisk(devices, bootloaderDevice);
         const rootDevice = requests.find(request => request["mount-point"].v === "/")?.["device-spec"].v;
@@ -292,6 +296,7 @@ export const applyStorage = async ({ devices, luks, onFail, onSuccess, partition
             await setBootloaderDrive({ drive: "" });
         }
     } else {
+        await setBootloaderKeepBootOrder({ keepBootOrder: false });
         await setBootloaderDrive({ drive: "" });
     }
 

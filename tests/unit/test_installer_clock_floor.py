@@ -10,7 +10,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 HERE = ROOT / "scripts/install/atlas-iso"
-spec = importlib.util.spec_from_file_location("runtime_clock", HERE / "prepare-runtime-clock.py")
+spec = importlib.util.spec_from_file_location("runtime_clock", HERE / "prepare-runtime-anaconda.py")
 PATCH = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(PATCH)
 UPSTREAM = (HERE / "upstream/anaconda-timezone-44.30.py").read_bytes()
