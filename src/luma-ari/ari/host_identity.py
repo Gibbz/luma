@@ -41,8 +41,8 @@ def authenticate(connection, sender):
         host = Path("/").stat()
         if (root.st_dev, root.st_ino) != (host.st_dev, host.st_ino):
             raise Refused("This process does not use the host filesystem.")
-        # Ari has PrivateTmp; compare the actual session bus broker namespace,
-        # not this daemon's private namespace or an inaccessible root PID1.
+        # Compare the actual session bus broker namespace, rather than an
+        # inaccessible root PID1, to identify native session clients.
         bus_pid = credential_for_bus(connection)
         if os.readlink(f"/proc/{pid}/ns/mnt") != os.readlink(f"/proc/{bus_pid}/ns/mnt"):
             raise Refused("A sandbox must use the signed application interface.")
