@@ -7,6 +7,9 @@
 #
 #   nightly-media.sh [--channel nightly] [--no-publish] [--rebuild] [--interim]
 #
+# --verify-existing SHA256 with --candidate --no-publish retries every check on
+# the exact already-built ISO, preserving previous failed verification evidence.
+#
 # --interim (owner request 2026-09-16, for a release that predates the
 # out-of-box checks): the medium is verified for what it already ships (no
 # credential, UEFI unattended install boots this build, the installer
@@ -55,6 +58,7 @@ publish=1
 rebuild=0
 interim=0
 candidate=
+verify_existing=
 publish_verified=
 notes=
 nightly_date_arg=
@@ -65,12 +69,19 @@ while [ "$#" -gt 0 ]; do
     --rebuild) rebuild=1; shift ;;
     --interim) interim=1; shift ;;
     --candidate) candidate=${2:?}; shift 2 ;;
+    --verify-existing) verify_existing=${2:?}; shift 2 ;;
     --publish-verified) publish_verified=${2:?}; shift 2 ;;
     --notes) notes=$(realpath "${2:?}"); shift 2 ;;
     --nightly-date) nightly_date_arg=${2:?}; shift 2 ;;
-    *) printf 'usage: %s [--channel nightly] [--no-publish] [--rebuild] [--interim] [--candidate BUILD_ID [--no-publish] | --publish-verified BUILD_ID --notes FILE --nightly-date YYYY-MM-DD]\n' "$0" >&2; exit 2 ;;
+    *) printf 'usage: %s [--channel nightly] [--no-publish] [--rebuild] [--interim] [--candidate BUILD_ID [--no-publish] [--verify-existing SHA256] | --publish-verified BUILD_ID --notes FILE --nightly-date YYYY-MM-DD]\n' "$0" >&2; exit 2 ;;
   esac
 done
+# A retry reuses only explicitly identified bytes; every verification still runs.
+if [ -n "$verify_existing" ]; then
+  [ -n "$candidate" ] && [ "$publish" -eq 0 ] && [ "$interim" -eq 0 ] &&
+    [ "$rebuild" -eq 0 ] && [ -z "$publish_verified" ] ||
+    luma_os_die '--verify-existing SHA256 requires --candidate and --no-publish, without --interim or --rebuild'
+fi
 case " $LUMA_MEDIA_CHANNELS " in *" $channel "*) ;; *) luma_os_die "no media are made for channel $channel (config/os/media.env)" ;; esac
 
 luma_os_require_root
@@ -119,7 +130,18 @@ fi
 build_id=${build_id:-${version##*-"$channel".}}
 [[ "$build_id" =~ ^[0-9]{8}\.[0-9]+$ ]] || luma_os_die "cannot tell the build id of $version"
 dir="$LUMA_OS_ROOT/media/$channel/$build_id"
-if [ "$rebuild" -eq 0 ] && [ -f "$dir/result.json" ] &&
+if [ -n "$verify_existing" ]; then
+  python3 "$luma_os_repo_root/scripts/os/lib/media_reuse.py" \
+    "$dir/luma-$channel-$build_id.iso" "$verify_existing" "$channel" "$ref" \
+    "$head" "$version" "$build_id" "$LUMA_MEDIA_ATLAS_REVISION" "$LUMA_OS_RELEASE_KEY_FINGERPRINT" ||
+    luma_os_die 'the existing medium does not match the explicitly identified candidate'
+  prior="$dir/attempt-$(date -u +%Y%m%dT%H%M%SZ)"
+  install -d -m 0755 "$prior"
+  for evidence in result.json verify-install.log verify-update.log verify-ui.log; do
+    [ ! -f "$dir/$evidence" ] || mv -- "$dir/$evidence" "$prior/"
+  done
+fi
+if [ -z "$verify_existing" ] && [ "$rebuild" -eq 0 ] && [ -f "$dir/result.json" ] &&
    python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if d.get("result") == "pass" and d.get("published") else 1)' "$dir/result.json"; then
   luma_os_log "media for $version are already published"
   exit 0
@@ -160,7 +182,7 @@ for id in "${old[@]}"; do
   luma_os_log "removed local media of $id"
 done
 luma_os_check_space 35 || fail 'not enough disk space for installer media'
-rm -rf "$dir"
+[ -n "$verify_existing" ] || rm -rf "$dir"
 install -d -m 0755 "$dir"
 
 # Atlas: the pinned revision from the pipeline mirror, and the RPM with its
@@ -221,8 +243,13 @@ fi
 
 iso="$dir/luma-$channel-$build_id.iso"
 step build
-"$luma_os_repo_root/scripts/os/build-staff-media.sh" --atlas-source "$atlas" --atlas-rpms "$atlas_rpms" \
-  --channel "$channel" ${candidate:+--candidate "$candidate"} --output "$iso" || fail 'building the medium failed'
+if [ -z "$verify_existing" ]; then
+  "$luma_os_repo_root/scripts/os/build-staff-media.sh" --atlas-source "$atlas" --atlas-rpms "$atlas_rpms" \
+    --channel "$channel" ${candidate:+--candidate "$candidate"} --output "$iso" || fail 'building the medium failed'
+else
+  luma_os_log "rechecking existing medium $verify_existing; all install and UI checks still required"
+  set_status "build_reused=true"
+fi
 step_done build
 set_status "iso_bytes=$(stat -c %s "$iso")" "iso_sha256=$(jstr "$(cat "$iso.sha256")")"
 
