@@ -64,7 +64,7 @@ with test_application('org.projectluma.TideInteractionTest') as (app, root):
     click(window, row('Song 2').play)
     settle(lambda: app.controller.snapshot.track.title == 'Song 2')
     window.search_item.entry.set_text('')
-    settle(lambda: window.query == '' and len(window._rows) == 4)
+    settle(lambda: window.query == '' and not window._rows)
     key(window, None, 'Escape')
     settle(lambda: not window.search.get_visible(), what='Escape closes search')
     settle(lambda: len(window._rows) == 4)

@@ -1,0 +1,236 @@
+Subject: [PATCH] Keep zone editing actions visible and use one edge-to-edge canvas
+
+Expose Save and Close independently of the hidden panel indicator. Close and
+Escape discard the edit; Save and Ctrl+S persist through the existing state API.
+Remove window-preview fill and window gaps from editor geometry only.
+
+--- a/indicator/indicator.js
++++ b/indicator/indicator.js
+@@ -8,6 +8,7 @@
+ import DefaultMenu from "./defaultMenu.js";
+ import GlobalState, { lumaNewLayoutId } from "../utils/globalState.js";
+ import EditingMenu from "./editingMenu.js";
++import EditorActions from "./editorActions.js";
+ import EditorDialog from "../components/editor/editorDialog.js";
+ import { registerGObjectClass } from "../utils/gjs.js";
+ var IndicatorState = /* @__PURE__ */ ((IndicatorState2) => {
+@@ -24,6 +25,7 @@
+   _enableScaling;
+   _path;
+   _keyPressEvent;
++  _editorActions = null;
+   constructor(path, uuid) {
+     super(0.5, "Tiling Shell Indicator", false);
+     Main.panel.addToStatusArea(uuid, this, 1, "right");
+@@ -158,7 +160,7 @@
+     if (this._state === 2 /* CREATE_NEW */)
+       GlobalState.get().addLayout(newLayout);
+     else GlobalState.get().editLayout(newLayout);
+-    this.menu.toggle();
++    this.menu.close();
+     this._layoutEditor.destroy();
+     this._layoutEditor = null;
+     this._setState(1 /* DEFAULT */);
+@@ -167,7 +169,7 @@
+   cancelLayoutOnClick() {
+     if (this._layoutEditor === null || this._state === 1 /* DEFAULT */)
+       return;
+-    this.menu.toggle();
++    this.menu.close();
+     this._layoutEditor.destroy();
+     this._layoutEditor = null;
+     this._setState(1 /* DEFAULT */);
+@@ -181,6 +183,8 @@
+     if (this._state === newState) return;
+     this._state = newState;
+     this._currentMenu?.destroy();
++    this._editorActions?.destroy();
++    this._editorActions = null;
+     switch (newState) {
+       case 1 /* DEFAULT */:
+         this._currentMenu = new DefaultMenu(this, this._enableScaling, this._openPreferences.bind(this));
+@@ -198,18 +202,31 @@
+           "key-press-event",
+           (_, event) => {
+             const symbol = event.get_key_symbol();
+-            if (symbol === Clutter.KEY_Escape)
++            if (symbol === Clutter.KEY_Escape) {
+               this.cancelLayoutOnClick();
++              return Clutter.EVENT_STOP;
++            }
++            if ((event.get_state() & Clutter.ModifierType.CONTROL_MASK) &&
++                (symbol === Clutter.KEY_s || symbol === Clutter.KEY_S)) {
++              this.saveLayoutOnClick();
++              return Clutter.EVENT_STOP;
++            }
+             return Clutter.EVENT_PROPAGATE;
+           }
+         );
+         this._currentMenu = new EditingMenu(this);
+-        this.show();
++        this._editorActions = new EditorActions(this);
++        // Editing actions are always on screen; retain the user's panel choice.
++        if (Settings.SHOW_INDICATOR) this.show();
+         break;
+     }
+   }
+ 
+   _onDestroy() {
++    if (this._keyPressEvent) global.stage.disconnect(this._keyPressEvent);
++    this._keyPressEvent = null;
++    this._editorActions?.destroy();
++    this._editorActions = null;
+     this._editorDialog?.destroy();
+     this._editorDialog = null;
+     this._layoutEditor?.destroy();
+--- a/indicator/editorActions.js
++++ b/indicator/editorActions.js
+@@ -0,0 +1,66 @@
++// SPDX-License-Identifier: GPL-3.0-or-later
++import { St, Clutter, Gio } from "../gi/ext.js";
++import * as Main from "resource:///org/gnome/shell/ui/main.js";
++import { registerGObjectClass } from "../utils/gjs.js";
++import { _ } from "../translations.js";
++
++// Independent of the optional panel indicator and the editor's tile actors.
++// Top chrome keeps these controls above zones, split lines and window previews.
++const _EditorActions = class _EditorActions extends St.BoxLayout {
++  _appearance = null;
++  constructor(indicator) {
++    super({ style_class: "luma-tiling-editor-actions", reactive: true });
++    const close = new St.Button({
++      label: _("Close"), accessible_name: _("Close without saving"),
++      style_class: "button luma-tiling-editor-action",
++      can_focus: true, reactive: true, track_hover: true
++    });
++    const save = new St.Button({
++      label: _("Save"), accessible_name: _("Save layout"),
++      style_class: "button luma-tiling-editor-action default",
++      can_focus: true, reactive: true, track_hover: true
++    });
++    close.connect("clicked", () => indicator.cancelLayoutOnClick());
++    save.connect("clicked", () => indicator.saveLayoutOnClick());
++    this.add_child(close);
++    this.add_child(save);
++    const schema = Gio.SettingsSchemaSource.get_default()?.lookup(
++      "org.project_luma.shell-state", true);
++    if (schema) {
++      this._appearance = new Gio.Settings({ settings_schema: schema });
++      this._appearance.connectObject("changed::surface-treatment",
++        () => this._syncAppearance(), this);
++    }
++    this._syncAppearance();
++    Main.layoutManager.addTopChrome(this, { affectsStruts: false });
++    this.connect("notify::width", () => this._place());
++    global.display.connectObject("workareas-changed", () => this._place(), this);
++    // The tile canvas has fixed monitor geometry. End an unsaved edit instead
++    // of leaving stale tiles and an unreachable toolbar after a hotplug.
++    Main.layoutManager.connectObject("monitors-changed",
++      () => indicator.cancelLayoutOnClick(), this);
++    this.connect("destroy", () => {
++      this._appearance?.disconnectObject(this);
++      this._appearance = null;
++      global.display.disconnectObject(this);
++      Main.layoutManager.disconnectObject(this);
++    });
++    this._place();
++  }
++
++  _syncAppearance() {
++    const mode = this._appearance?.get_string("surface-treatment") || "dark";
++    for (const name of ["light", "dark", "frost", "glass"])
++      if (name === mode) this.add_style_class_name(`luma-surface-${name}`);
++      else this.remove_style_class_name(`luma-surface-${name}`);
++  }
++
++  _place() {
++    const area = Main.layoutManager.getWorkAreaForMonitor(Main.layoutManager.primaryIndex);
++    const margin = 16 * St.ThemeContext.get_for_stage(global.stage).scale_factor;
++    this.set_position(Math.max(area.x, area.x + area.width - this.width - margin),
++      area.y + margin);
++  }
++};
++registerGObjectClass(_EditorActions);
++export default _EditorActions;
+--- a/components/editor/layoutEditor.js
++++ b/components/editor/layoutEditor.js
+@@ -37,13 +37,15 @@
+       const scalingFactor = getMonitorScalingFactor(monitor.index);
+       enableScalingFactorSupport(this, scalingFactor);
+     }
+-    const workArea = Main.layoutManager.getWorkAreaForMonitor(
+-      monitor.index
+-    );
++    // Edit normalized zones across the monitor, without dock/work-area insets.
++    // Window placement still scales saved zones into the real work area.
++    const workArea = monitor;
+     this.set_position(workArea.x, workArea.y);
+     this.set_size(workArea.width, workArea.height);
+-    this._innerGaps = buildMargin(Settings.get_inner_gaps());
+-    this._outerGaps = buildMargin(Settings.get_outer_gaps());
++    // Edit normalized zones edge to edge. Window spacing belongs to the
++    // placement renderer, not a second inset inside the zone editor.
++    this._innerGaps = buildMargin(0);
++    this._outerGaps = buildMargin(0);
+     this._sliders = [];
+     this._containerRect = buildRectangle({
+       x: 0,
+--- a/components/editor/editorDialog.js
++++ b/components/editor/editorDialog.js
+@@ -161,7 +161,7 @@
+     );
+     suggestion4.add_child(
+       new St.Label({
+-        text: ` ${_("use the indicator button to save or cancel")}.`,
++        text: ` ${_("use Save or Close at the top right; Close discards unsaved changes")}.`,
+         xAlign: Clutter.ActorAlign.CENTER,
+         yAlign: Clutter.ActorAlign.CENTER,
+         styleClass: "",
+--- a/stylesheet.css
++++ b/stylesheet.css
+@@ -205,3 +205,45 @@
+   border-radius-value: 6px;
+   border-width-value: 1px;
+ }
++
++/* Luma zone editing: one neutral canvas, no inherited blue window preview
++ * and no window gaps at the screen edges. Actual window spacing is unchanged. */
++.layout-editor {
++  background-color: rgba(25,27,31,0.35);
++  padding: 0; border: none; border-radius: 0;
++}
++.layout-editor .editable-tile-preview {
++  background-color: transparent; border: none; box-shadow: none;
++  padding: 0; border-radius: 0;
++}
++.layout-editor .editable-tile-preview-button {
++  background-color: transparent; border: none; box-shadow: none;
++  padding: 0; border-radius: 0;
++}
++.layout-editor .editable-tile-preview-button:hover {
++  background-color: rgba(255,255,255,0.08);
++}
++.luma-tiling-editor-actions {
++  spacing: 8px; padding: 8px; border-radius: 16px;
++  background-color: #25282d; color: #e7e9e8;
++  box-shadow: 0 4px 12px rgba(0,0,0,0.24);
++}
++.luma-tiling-editor-action {
++  min-height: 24px; min-width: 64px; padding: 8px 16px;
++  border-radius: 10px; border: none;
++  background-color: rgba(255,255,255,0.08); color: #e7e9e8;
++}
++.luma-tiling-editor-action:hover { background-color: rgba(255,255,255,0.14); }
++.luma-tiling-editor-action:focus { box-shadow: inset 0 0 0 2px #a9b5c1; }
++.luma-tiling-editor-action:active { background-color: rgba(255,255,255,0.20); }
++.luma-tiling-editor-action.default { background-color: #8a99a8; color: #191b1f; }
++.luma-tiling-editor-action.default:hover { background-color: #a9b5c1; }
++.luma-tiling-editor-action.default:active { background-color: #7d8c9b; }
++.luma-tiling-editor-actions.luma-surface-light { background-color: #f5f6f4; color: #34383d; }
++.luma-surface-light .luma-tiling-editor-action { background-color: rgba(25,27,31,0.06); color: #34383d; }
++.luma-surface-light .luma-tiling-editor-action:hover { background-color: rgba(25,27,31,0.10); }
++.luma-surface-light .luma-tiling-editor-action:active { background-color: rgba(25,27,31,0.16); }
++.luma-surface-light .luma-tiling-editor-action:focus { box-shadow: inset 0 0 0 2px #61728a; }
++.luma-surface-light .luma-tiling-editor-action.default { background-color: #61728a; color: white; }
++.luma-surface-light .luma-tiling-editor-action.default:hover { background-color: #52647c; }
++.luma-surface-light .luma-tiling-editor-action.default:active { background-color: #45566c; }

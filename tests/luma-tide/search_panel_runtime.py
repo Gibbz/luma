@@ -18,10 +18,12 @@ with test_application('org.projectluma.TideSearchPanelTest') as (app, root):
     window.open_search()
     assert window.search.get_parent() is window.corner.normal
     window.search_item.entry.set_text('blue')
-    settle(lambda: window.query == 'blue' and window.view == 'songs')
-    assert window.trail.current.title == 'Results'
+    settle(lambda: window.query == 'blue' and window.view == 'search')
+    assert window.trail.current.title == 'Search results'
     assert window._rows[0].song.title == 'Blue Morning'
     assert len(window._rows) == 1
+    assert named(window, 'td-search-artists') is not None
+    assert named(window, 'td-search-albums') is not None
     window.close_search()
     assert window.view == 'albums' and not window.search.get_visible()
     window.open_sources()

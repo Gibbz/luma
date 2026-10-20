@@ -142,3 +142,6 @@ binding='<Shift><Super>F23'
 # "degree", "e acute" and "n tilde" find their characters. Loading the names
 # with the session means the first search does not wait on them.
 load-unicode-at-startup=true
+
+[org/gnome/desktop/search-providers]
+enabled=['org.gnome.Nautilus.desktop', 'org.projectluma.Depot.desktop']

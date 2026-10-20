@@ -207,9 +207,11 @@ def main() -> int:
     assert first_button.get_property("hexpand") and second_button.get_property("hexpand")
     assert second_button.get_next_sibling() is None, "bottom actions should be an equal pair"
     if not phone:
-        for _ in range(5):
+        deadline = time.monotonic() + .35
+        while time.monotonic() < deadline:
             while GLib.MainContext.default().pending():
                 GLib.MainContext.default().iteration(False)
+            time.sleep(.005)
         main_x = view.host.compute_bounds(view.owner)[1].get_x() + view.host.get_width()
         details_x = view.details.sheet.compute_bounds(view.owner)[1].get_x()
         assert abs(details_x - main_x - 8) <= 1, f"details must have one shared gutter: {details_x - main_x}px"
@@ -350,7 +352,9 @@ def main() -> int:
     retry_calls = []
     provider = SimpleNamespace(retry_media=lambda *args: retry_calls.append(args),
                                status={"network_state": "connected"}, capabilities={"media_fetch": True})
-    view.current["service"] = SimpleNamespace(provider=provider)
+    view.current["service"] = SimpleNamespace(provider=provider, store=SimpleNamespace(draft_attachments=lambda _address: ()))
+    view.current.setdefault("address", "test-recipient")
+    view.owner._paste_image = lambda *_args: None
     view.current["service"].label = "Google Messages"
     direct = {**view.current, "group": (), "is_group": False, "sms": False,
               "person": None, "person_data": {}}

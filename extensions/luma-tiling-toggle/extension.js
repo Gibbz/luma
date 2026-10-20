@@ -5,6 +5,7 @@ import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import GObject from 'gi://GObject';
 import St from 'gi://St';
+import Pango from 'gi://Pango';
 
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
@@ -21,7 +22,8 @@ const TILING_OBJECT_PATH = '/org/gnome/Shell/Extensions/TilingShell';
 const TILING_INTERFACE = 'org.gnome.Shell.Extensions.TilingShell';
 const PREVIEW_WIDTH = 68;
 const PREVIEW_HEIGHT = 40;
-const MAX_PREVIEWS_PER_ROW = 4;
+const MAX_PREVIEWS_PER_ROW = 3;
+const PAGE_SIZE = 6;
 
 // Company words a display's EDID name carries that a person never says.
 const VENDOR_NOISE = /\b(electronics?|electric|company|corporation|corp|inc|co|ltd|limited|technology|technologies|computer|display|displays|international|group|gmbh|ag|s\.?a)\b\.?,?/gi;
@@ -83,14 +85,14 @@ function createTilingSettings() {
 // a neutral frame and tiles for every layout, and the one state slate for the
 // chosen one (ADR-043). They used to carry white inline colours meant for a
 // dark panel, which is why the picker read as dark in every mode.
-function createLayoutPreview(layout, selected, onClicked) {
+function createLayoutPreview(layout, selected, onClicked, name) {
     const button = new St.Button({
-        accessible_name: layout.id,
+        accessible_name: `${name}, ${layout.tiles.length} ${layout.tiles.length === 1 ? 'zone' : 'zones'}${selected ? ', current layout' : ''}`,
         can_focus: true,
         checked: selected,
         reactive: true,
         style_class: 'luma-tiling-preview',
-        toggle_mode: true,
+        toggle_mode: false,
         track_hover: true,
     });
     const preview = new St.Widget({
@@ -112,7 +114,14 @@ function createLayoutPreview(layout, selected, onClicked) {
         preview.add_child(actor);
     }
 
-    button.set_child(preview);
+    const card = new St.BoxLayout({vertical: true, style_class: 'luma-tiling-card', x_align: Clutter.ActorAlign.CENTER});
+    card.add_child(preview);
+    const label = new St.Label({text: name, width: PREVIEW_WIDTH,
+        style_class: 'luma-tiling-card-name', x_align: Clutter.ActorAlign.CENTER});
+    label.clutter_text.ellipsize = Pango.EllipsizeMode.END;
+    card.add_child(label);
+    button.set_child(card);
+    button._layoutId = layout.id;
     button.connect('clicked', onClicked);
     return button;
 }
@@ -130,17 +139,35 @@ class TilingToggle extends QuickSettings.QuickMenuToggle {
         // on the other side rather than a repeat of the pill's name and icon.
         this.menu.setHeader('view-grid-symbolic', 'Window layouts');
 
-        this._layoutsItem = new PopupMenu.PopupBaseMenuItem({
-            can_focus: false,
-            reactive: false,
-            style_class: 'luma-tiling-layouts',
+        // A grid is a vertical section, not a single menu row. A row may
+        // shrink to its minimum height while its tall child still paints at
+        // natural height, putting the actions over the last monitor's tiles.
+        this._monitorIndex = Main.layoutManager.primaryIndex;
+        this._page = 0;
+        this._query = '';
+        this._searchItem = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false});
+        this._search = new St.Entry({hint_text: 'Find a layout…', can_focus: true,
+            x_expand: true, style_class: 'luma-tiling-search', accessible_name: 'Find a layout'});
+        this._search.set_primary_icon(new St.Icon({icon_name: 'edit-find-symbolic', icon_size: 16}));
+        this._search.connect('secondary-icon-clicked', () => {
+            this._search.set_text('');
+            this._search.grab_key_focus();
         });
-        this._layoutsBox = new St.BoxLayout({
-            style_class: 'luma-tiling-layouts-box',
-            vertical: true,
-            x_expand: true,
+        this._searchItem.add_child(this._search);
+        this.menu.addMenuItem(this._searchItem);
+        this._search.clutter_text.connect('text-changed', () => {
+            this._query = this._search.get_text().trim().toLocaleLowerCase();
+            this._clearSearch = this._query ? new St.Icon({icon_name: 'edit-clear-symbolic',
+                icon_size: 16, accessible_name: 'Clear search'}) : null;
+            this._search.set_secondary_icon(this._clearSearch);
+            this._page = 0;
+            this._renderLayouts();
         });
-        this._layoutsItem.add_child(this._layoutsBox);
+        this._layoutsItem = new PopupMenu.PopupMenuSection();
+        this._layoutsBox = this._layoutsItem.box;
+        this._layoutsBox.add_style_class_name('luma-tiling-layouts-box');
+        this._layoutsBox.x_expand = true;
+        this._layoutsBox.set_style('background-color: transparent;');
         this.menu.addMenuItem(this._layoutsItem);
         // The actions below get their own band, set off by a hairline with
         // room on both sides, so they can never be drawn over the last row of
@@ -153,11 +180,17 @@ class TilingToggle extends QuickSettings.QuickMenuToggle {
             'Edit layouts…', () => this._invokeEditor('openLayoutEditor'));
         this._newLayoutItem = this.menu.addAction(
             'New layout…', () => this._invokeEditor('newLayout'));
-        const settingsItem = this.menu.addAction(
+        const settingsItem = this._settingsItem = this.menu.addAction(
             'Tiling settings', () => this._openPreferences());
         // Plain rows under the hairline, like every other sheet's links.
-        for (const item of [this._editLayoutsItem, this._newLayoutItem, settingsItem])
+        for (const item of [this._editLayoutsItem, this._newLayoutItem, settingsItem]) {
             item.add_style_class_name('luma-sheet-link');
+            item.add_style_class_name('luma-tiling-action');
+            item.set_style('min-height: 24px; padding: 8px 10px;');
+        }
+        for (const [item, icon] of [[this._newLayoutItem, 'list-add-symbolic'],
+            [this._editLayoutsItem, 'document-edit-symbolic'], [settingsItem, 'emblem-system-symbolic']])
+            item.insert_child_at_index(new St.Icon({icon_name: icon, icon_size: 16}), 0);
         settingsItem.visible = Main.sessionMode.allowSettings;
         this._editLayoutsItem.visible = Main.sessionMode.allowSettings;
         this._newLayoutItem.visible = Main.sessionMode.allowSettings;
@@ -193,7 +226,14 @@ class TilingToggle extends QuickSettings.QuickMenuToggle {
         // stylesheet's per-mode rules never reached the previews: their tiles
         // had no colour at all and every layout was blank. Carry the mode
         // class onto the detail, and follow it when the mode changes.
-        this.menu.connect('open-state-changed', () => this._syncSurface());
+        this.menu.connect('open-state-changed', (_menu, open) => {
+            if (open) {
+                this._query = '';
+                this._search.set_text('');
+                this._showCurrentPage();
+            }
+            this._syncSurface();
+        });
         this._surfaceSyncId = GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
             this._surfaceSyncId = 0;
             const quickBox = Main.panel.statusArea.quickSettings?.menu?.box;
@@ -366,63 +406,130 @@ class TilingToggle extends QuickSettings.QuickMenuToggle {
         try {
             const layouts = JSON.parse(this._tilingSettings.get_string('layouts-json'));
             return layouts.filter(layout =>
-                typeof layout.id === 'string' &&
+                layout && typeof layout.id === 'string' &&
                 Array.isArray(layout.tiles) &&
-                layout.tiles.length > 0);
+                layout.tiles.length > 0 && layout.tiles.every(tile =>
+                    tile && ['x', 'y', 'width', 'height'].every(key => Number.isFinite(tile[key])) &&
+                    tile.x >= 0 && tile.y >= 0 && tile.width > 0 && tile.height > 0 &&
+                    tile.x + tile.width <= 1.001 && tile.y + tile.height <= 1.001));
         } catch (error) {
             console.error(`Luma Tiling: invalid layouts-json: ${error.message}`);
             return [];
         }
     }
 
-    _renderLayouts() {
+    _selectedId(layouts) {
+        return this._tilingSettings.get_value('selected-layouts').deepUnpack()
+            [global.workspace_manager.get_active_workspace_index()]?.[this._monitorIndex] ?? layouts[0]?.id;
+    }
+
+    _showCurrentPage() {
+        const layouts = this._getLayouts();
+        this._monitorIndex = Math.max(0, Math.min(this._monitorIndex, Main.layoutManager.monitors.length - 1));
+        this._page = Math.floor(Math.max(0, layouts.findIndex(l => l.id === this._selectedId(layouts))) / PAGE_SIZE);
+        this._renderLayouts();
+    }
+
+    _navButton(icon, name, callback, sensitive = true) {
+        const button = new St.Button({style_class: 'luma-tiling-nav', can_focus: sensitive,
+            reactive: sensitive, track_hover: true, accessible_name: name,
+            child: new St.Icon({icon_name: icon, icon_size: 16})});
+        if (!sensitive) button.add_style_pseudo_class('insensitive');
+        button.opacity = sensitive ? 255 : 97;
+        button.connect('clicked', callback);
+        button.set_style('min-width: 24px; min-height: 24px; padding: 8px;');
+        return button;
+    }
+
+    _renderLayouts(focus = null) {
         this._layoutsBox.destroy_all_children();
         const layouts = this._getLayouts();
-        this.menu.setCount?.(layouts.length === 1
-            ? '1 layout' : `${layouts.length} layouts`);
-        if (layouts.length === 0) {
-            this._layoutsBox.add_child(new St.Label({text: 'No layouts available'}));
-            return;
+        this._monitorIndex = Math.max(0, Math.min(this._monitorIndex, Main.layoutManager.monitors.length - 1));
+        this.menu.setCount?.(layouts.length === 1 ? '1 layout' : `${layouts.length} layouts`);
+        this._searchItem.visible = layouts.length >= 12 || !!this._query;
+        const monitorCount = Main.layoutManager.monitors.length;
+        const display = new St.BoxLayout({style_class: 'luma-tiling-display-row', x_expand: true});
+        const changeDisplay = delta => {
+            this._monitorIndex = (this._monitorIndex + delta + monitorCount) % monitorCount;
+            if (this._query) this._renderLayouts();
+            else this._showCurrentPage();
+            this._displayNext?.grab_key_focus();
+        };
+        if (monitorCount > 1)
+            display.add_child(this._navButton('go-previous-symbolic', 'Previous display', () => changeDisplay(-1)));
+        const title = new St.BoxLayout({vertical: true, x_expand: true, y_align: Clutter.ActorAlign.CENTER});
+        const displayLabel = new St.Label({style_class: 'luma-tiling-display-name', x_expand: true,
+            text: this._displayNames?.[this._monitorIndex] || `Display ${this._monitorIndex + 1}`});
+        displayLabel.clutter_text.ellipsize = Pango.EllipsizeMode.END;
+        title.add_child(displayLabel);
+        title.add_child(new St.Label({style_class: 'luma-tiling-caption',
+            text: monitorCount > 1 ? `Display ${this._monitorIndex + 1} of ${monitorCount}` : 'Choose a window layout'}));
+        display.add_child(title);
+        this._displayNext = null;
+        if (monitorCount > 1) {
+            this._displayNext = this._navButton('go-next-symbolic', 'Next display', () => changeDisplay(1));
+            display.add_child(this._displayNext);
         }
-
-        const selectedLayouts = this._tilingSettings
-            .get_value('selected-layouts').deepUnpack();
-        const workspaceIndex = global.workspace_manager.get_active_workspace_index();
-        const monitorCount = Math.max(1, Main.layoutManager.monitors.length);
-
-        for (let monitorIndex = 0; monitorIndex < monitorCount; monitorIndex++) {
-            if (monitorCount > 1) {
-                this._layoutsBox.add_child(new St.Label({
-                    style_class: 'luma-tiling-display-name',
-                    text: this._displayNames?.[monitorIndex] || `Display ${monitorIndex + 1}`,
-                }));
-            }
-
-            const selectedId = selectedLayouts[workspaceIndex]?.[monitorIndex]
-                ?? layouts[0].id;
-            // Rows are balanced so a last row never holds a single stray layout:
-            // five layouts wrap as three and two, not four and one.
-            const rows = Math.ceil(layouts.length / MAX_PREVIEWS_PER_ROW);
-            const perRow = Math.ceil(layouts.length / rows);
-            for (let start = 0; start < layouts.length; start += perRow) {
-                const row = new St.BoxLayout({
-                    style_class: 'luma-tiling-layouts-row',
-                    x_align: Clutter.ActorAlign.CENTER,
-                    x_expand: true,
-                });
-                for (const layout of layouts.slice(start, start + perRow)) {
-                    row.add_child(createLayoutPreview(
-                        layout,
-                        layout.id === selectedId,
-                        () => this._selectLayout(monitorIndex, layout.id)));
+        this._layoutsBox.add_child(display);
+        const entries = layouts.map((layout, i) => ({layout, name: layout.name?.trim?.() || `Layout ${i + 1}`}));
+        const selectedId = this._selectedId(layouts);
+        const current = entries.find(e => e.layout.id === selectedId);
+        if (current) {
+            const currentLabel = new St.Label({text: `Current · ${current.name}`, width: 220});
+            currentLabel.clutter_text.ellipsize = Pango.EllipsizeMode.END;
+            const currentButton = new St.Button({child: currentLabel, can_focus: true,
+                reactive: true, track_hover: true, style_class: 'luma-tiling-current',
+                accessible_name: `Show current layout, ${current.name}`});
+            currentButton.connect('clicked', () => {
+                this._query = ''; this._search.set_text(''); this._showCurrentPage();
+                this._previewButtons.find(b => b.checked)?.grab_key_focus();
+            });
+            this._layoutsBox.add_child(currentButton);
+        }
+        const filtered = entries.filter(e => !this._query ||
+            `${e.name} ${e.layout.tiles.length} zones`.toLocaleLowerCase().includes(this._query));
+        const pages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+        this._page = Math.max(0, Math.min(this._page, pages - 1));
+        const start = this._page * PAGE_SIZE;
+        const shown = filtered.slice(start, start + PAGE_SIZE);
+        this._previewButtons = [];
+        if (!shown.length) {
+            this._layoutsBox.add_child(new St.Label({style_class: 'luma-tiling-empty',
+                text: layouts.length ? 'No matching layouts' : 'Create your first layout below'}));
+        } else {
+            const perRow = Math.ceil(shown.length / Math.ceil(shown.length / MAX_PREVIEWS_PER_ROW));
+            for (let i = 0; i < shown.length; i += perRow) {
+                const row = new St.BoxLayout({style_class: 'luma-tiling-layouts-row',
+                    x_align: Clutter.ActorAlign.CENTER, x_expand: true});
+                for (const {layout, name} of shown.slice(i, i + perRow)) {
+                    const button = createLayoutPreview(layout, layout.id === selectedId,
+                        () => this._selectLayout(this._monitorIndex, layout.id), name);
+                    this._previewButtons.push(button);
+                    row.add_child(button);
                 }
                 this._layoutsBox.add_child(row);
             }
         }
-        // Display names arrive asynchronously and add a label per display, so
-        // the grid can grow while the detail is open. Ask for a new layout at
-        // once, so the actions move down with it instead of being overdrawn.
+        const pager = new St.BoxLayout({style_class: 'luma-tiling-pager', x_expand: true});
+        this._pagePrevious = this._navButton('go-previous-symbolic', 'Previous layouts',
+            () => {this._page--; this._renderLayouts('previous');}, this._page > 0);
+        this._pageNext = this._navButton('go-next-symbolic', 'Next layouts',
+            () => {this._page++; this._renderLayouts('next');}, this._page < pages - 1);
+        pager.add_child(this._pagePrevious);
+        pager.add_child(new St.Label({style_class: 'luma-tiling-caption', x_expand: true,
+            x_align: Clutter.ActorAlign.CENTER, y_align: Clutter.ActorAlign.CENTER,
+            text: filtered.length ? `${start + 1}–${start + shown.length} of ${filtered.length}` : '0 layouts'}));
+        pager.add_child(this._pageNext);
+        pager.visible = filtered.length > PAGE_SIZE;
+        this._layoutsBox.add_child(pager);
+        this._editLayoutsItem.setSensitive(layouts.length > 0);
+        this._editLayoutsItem.opacity = layouts.length ? 255 : 97;
         this.menu.actor?.queue_relayout();
+        if (focus) {
+            const preferred = focus === 'next' ? this._pageNext : this._pagePrevious;
+            (preferred.can_focus ? preferred : (this._pageNext.can_focus ? this._pageNext :
+                this._pagePrevious.can_focus ? this._pagePrevious : this._previewButtons[0]))?.grab_key_focus();
+        }
     }
 
     _syncSurface() {
@@ -434,6 +541,19 @@ class TilingToggle extends QuickSettings.QuickMenuToggle {
             else
                 this.menu.box.remove_style_class_name(`luma-surface-${name}`);
         }
+        const ink = this.menu.box.get_theme_node().get_foreground_color();
+        const light = ink.red + ink.green + ink.blue < 384;
+        const actionInk = light ? '#34383d' : '#e7e9e8';
+        for (const item of [this._editLayoutsItem, this._newLayoutItem, this._settingsItem]) {
+            // Older Shell palettes have highly specific sheet-link selectors.
+            // Keep both label and glyph on the actual material's ink.
+            item.set_style(`min-height: 24px; padding: 8px 10px; color: ${actionInk};`);
+            item.label.set_style(`color: ${actionInk};`);
+            for (const child of item.get_children())
+                if (child instanceof St.Icon) child.set_style(`color: ${actionInk};`);
+        }
+        this.menu.box[light ? 'add_style_class_name' : 'remove_style_class_name']('luma-tiling-light-material');
+        this.menu.box[light ? 'remove_style_class_name' : 'add_style_class_name']('luma-tiling-dark-material');
     }
 
     _selectLayout(monitorIndex, layoutId) {
@@ -444,6 +564,8 @@ class TilingToggle extends QuickSettings.QuickMenuToggle {
     }
 
     _invokeEditor(method) {
+        this.menu.close();
+        Main.panel.statusArea.quickSettings?.menu?.close();
         this._withTilingEnabled(() => this._callTilingShell(method));
     }
 

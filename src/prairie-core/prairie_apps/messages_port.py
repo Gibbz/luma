@@ -172,7 +172,7 @@ class MessagesSurface:
         apply_sidebar_variant(self.sidebar, "people")
         self.sidebar.set_name("msg-sidebar")
         self.sidebar.list.connect("row-activated", self._row_activated)
-        self.foot = SidebarFoot(search="Search people and messages", on_search=self._search,
+        self.foot = SidebarFoot(search="Search messages", on_search=self._search,
                                 add=("New message", "square-pen", self.new_message))
         self.foot.set_name("msg-foot")
         self.foot.add_button.set_name("msg-new")
@@ -222,7 +222,7 @@ class MessagesSurface:
         self.history.set_margin_bottom(69)
         self.history_clamp = Adw.Clamp(maximum_size=760, tightening_threshold=760, child=self.history)
         self.scroller = ScrollView(self.history_clamp, fade_top_start=52, fade_top_end=104,
-                                   fade_top_always=True)
+                                   fade_top_always=False)
         # A reader at the end stays there while late content (photos, link cards)
         # or a grown bar changes the thread's height.
         self._stick_end = True
@@ -460,6 +460,10 @@ class MessagesSurface:
         self.content.set_spacing(0)
 
     def render_sidebar(self) -> None:
+        if not self.fixture:
+            ready = self.owner._refresh_luma_identity()
+            registered = ready and bool((self.owner._luma_identity or {}).get("handle"))
+            self.empty.secondary_button.set_label("Your Luma username" if registered else "Choose a Luma username")
         entries = self._entries()
         if self.fixture and self.query:
             entries = [entry for entry in entries if self.query.casefold() in entry["search_text"]]
@@ -570,7 +574,7 @@ class MessagesSurface:
         while child := rows.get_first_child():
             rows.remove(child)
         rows.append(_label("New message", "label"))
-        rows.append(_label("Find Luma friends by @username. Phone numbers match your contacts or send texts.",
+        rows.append(_label("Find Luma friends by username, with or without @. Phone numbers match your contacts or send texts.",
                            "caption", wrap=True))
         self._new_candidates = self._recipients(query, limit=4 if self.fixture else 20)
         for candidate in self._new_candidates:
@@ -601,7 +605,7 @@ class MessagesSurface:
             return found[:limit]
         from . import messages_luma as luma
 
-        handle = luma.handle_from(query) if luma.looks_like_handle(query) else None
+        handle = luma.handle_from(query)
         if handle and self.owner._luma_service() is not None:
             found.append({"name": "@" + handle, "key": None, "address": "@" + handle, "handle": handle,
                           "subtitle": "Luma · End-to-end encrypted"})
@@ -1770,9 +1774,29 @@ class MessagesSurface:
         items = [attach, self.bar_entry]
         context = BarContext("reply", "Replying to {}", self._sender_name(self.reply),
                              on_dismiss=self._cancel_reply) if self.reply else None
-        self.center.show_bar(items, context=context, phone_control_size="small")
+        attachment_head = None
+        if not self.fixture:
+            attachments = entry["service"].store.draft_attachments(entry["address"])
+            if attachments:
+                row = Gtk.Box(spacing=6)
+                for attachment in attachments:
+                    store = entry["service"].store
+                    texture = (_live_photo_texture(store.attachment_path(attachment), attachment.content_type)
+                               if attachment.content_type.startswith("image/") else None)
+                    chip = BarChip(attachment.name,
+                                   lead=BarThumbnail(texture, label=attachment.name) if texture else "file-text",
+                                   on_dismiss=lambda uid=attachment.uid: self.owner._remove_attachment(uid))
+                    row.append(make_control(chip))
+                attachment_head = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.AUTOMATIC,
+                                                     vscrollbar_policy=Gtk.PolicyType.NEVER)
+                attachment_head.set_child(row)
+                attachment_head.set_name("msg-draft-attachments")
+                items.append(BarAction("send-horizontal", "Send", on_activate=self._send))
+        self.center.show_bar(items, context=context, head=attachment_head, phone_control_size="small")
         if self.bar_entry.widget is not None:
             self.bar_entry.widget.set_name("msg-composer-entry")
+            if not self.fixture:
+                self.bar_entry.widget.view.connect("paste-clipboard", self.owner._paste_image)
             if self.bar_entry.widget.grow_button is not None:
                 self.bar_entry.widget.grow_button.set_name("msg-expand")
             tool = self.bar_entry.widget.well.get_first_child()
@@ -1911,7 +1935,7 @@ class MessagesSurface:
         draft = (self.center.editor.draft if self.center.state == "editor" and self.center.editor is not None else
                  self.bar_entry.text if self.bar_entry is not None else "")
         text = (submitted if submitted is not None else draft or "").strip()
-        if not text:
+        if not text and (self.fixture or not self.current["service"].store.draft_attachments(self.current["address"])):
             return
         if self.fixture:
             content = {"text": text}
@@ -2621,7 +2645,7 @@ class MessagesSurface:
         search.set_margin_top(2)
         search.set_margin_bottom(8)
         content.append(search)
-        help_text = _label("Find Luma friends by @username. Phone numbers match your contacts or send texts.",
+        help_text = _label("Find Luma friends by username, with or without @. Phone numbers match your contacts or send texts.",
                            "caption", wrap=True)
         help_text.set_margin_start(10)
         help_text.set_margin_end(10)
@@ -2665,7 +2689,7 @@ class MessagesSurface:
                 return
             from . import messages_luma as luma
 
-            handle = luma.handle_from(query) if luma.looks_like_handle(query) else None
+            handle = luma.handle_from(query)
             if handle and self.owner._luma_service() is not None:
                 add("@" + handle, "Luma · End-to-end encrypted", None, "@" + handle, handle=handle)
             candidates = tuple(contact for contact in self.owner.contacts if contact.phone and

@@ -7,6 +7,8 @@ Tide's arrangements; shared buttons and text keep their kit-owned appearance.
 from __future__ import annotations
 
 import math
+import colorsys
+from collections import Counter
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
@@ -15,7 +17,7 @@ import gi
 gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
 gi.require_version('Graphene', '1.0')
-from gi.repository import Graphene, Gsk, Gtk, Pango
+from gi.repository import Gdk, Graphene, Gsk, Gtk, Pango
 from luma_appkit import lumaui
 from luma_appkit import BarAction, CoverArt, DetailsItem, MediaTransport, Selection, apply_type, icons, lumaui_tokens
 from luma_appkit.action_center import make_control
@@ -136,6 +138,33 @@ class ColumnSlot(Gtk.Box):
             self.child.unparent()
 
 
+def artwork_hues(texture):
+    """Sample decoded cover colours for the shared media background."""
+    width, height = texture.get_width(), texture.get_height()
+    if width <= 0 or height <= 0 or width * height > 4_000_000:
+        return ()
+    downloader = Gdk.TextureDownloader.new(texture)
+    downloader.set_format(Gdk.MemoryFormat.R8G8B8A8)
+    pixels, stride = downloader.download_bytes()
+    data = pixels.get_data()
+    colours = Counter()
+    for y in range(0, height, max(1, height // 24)):
+        for x in range(0, width, max(1, width // 24)):
+            offset = y * stride + x * 4
+            red, green, blue, alpha = data[offset:offset + 4]
+            hue, saturation, value = colorsys.rgb_to_hsv(red / 255, green / 255, blue / 255)
+            if alpha > 127 and saturation > .18 and value > .08:
+                colours[int(hue * 24) % 24] += saturation * value
+    result = []
+    for bucket, weight in colours.most_common():
+        hue = bucket * 15 + 7.5
+        if all(min(abs(hue - prior), 360 - abs(hue - prior)) >= 45 for prior in result):
+            result.append(hue)
+        if len(result) == 2:
+            break
+    return tuple(result)
+
+
 def AlbumCover(album: Album, size=160, *, plain=False, on_loaded=None, fill=False, flexible=False, presentation="cover"):
     """Compose the shared cover using actual source artwork when available.
 
@@ -154,6 +183,8 @@ def AlbumCover(album: Album, size=160, *, plain=False, on_loaded=None, fill=Fals
         # The shared native cover owns viewport admission, retries and decoded
         # pixels. Keep Tide's real artwork lighting callback at that boundary.
         cover.connect('artwork-loaded', lambda _cover, texture: on_loaded(texture))
+        if isinstance(cover.paintable, Gdk.Texture):
+            on_loaded(cover.paintable)
     return slot
 
 

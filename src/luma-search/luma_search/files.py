@@ -29,6 +29,13 @@ HIDDEN_URL_PARTS = ("/node_modules/", "/__pycache__/", "/site-packages/", "/.git
 SHALLOW_LIMIT = 100
 
 
+def personal_candidate(candidate: dict) -> bool:
+    path = candidate.get("path") or uri_to_path(candidate.get("uri", "")) or ""
+    parts = Path(path).parts
+    return bool(path) and not any(part.startswith(".") for part in parts[1:]) and not (
+        parts[1:2] and parts[1] in {"etc", "usr", "var", "proc", "sys", "run", "dev", "boot"})
+
+
 def _sparql(order: str, limit: int) -> str:
     return (
         "SELECT ?url ?name ?modified WHERE { GRAPH tracker:FileSystem { "
@@ -302,10 +309,10 @@ class FileIndex:
         # asked from the second letter, local sources answer the first.
         hits = self._query(ranking.fts_query(terms)) if len("".join(terms)) >= 2 else []
         context = dict(home=self.home, now=self._now(), xdg_folders=self._xdg, limit=RESULT_LIMIT)
-        ranked = ranking.rank_files([with_usage(c) for c in (*local, *hits)], terms, **context)
+        ranked = ranking.rank_files([with_usage(c) for c in (*local, *hits) if personal_candidate(c)], terms, **context)
         if any(len(term) >= 5 for term in terms) and not any(item["tier"] >= ranking.TIER_WORD for item in ranked):
             more = self._query(ranking.fts_query(terms, shorten=True))
-            ranked = ranking.rank_files([with_usage(c) for c in (*local, *hits, *more)], terms, **context)
+            ranked = ranking.rank_files([with_usage(c) for c in (*local, *hits, *more) if personal_candidate(c)], terms, **context)
         return [item for item in ranked if os.path.lexists(item["path"])]
 
     def short_parent(self, path: str) -> str:

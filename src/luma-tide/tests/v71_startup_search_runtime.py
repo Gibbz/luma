@@ -31,7 +31,7 @@ def named(w,name):
 app=Adw.Application(application_id='org.projectluma.TidePolishTest',flags=Gio.ApplicationFlags.NON_UNIQUE);assert app.register(None)
 install_appkit();install_lumaui();add_style_sheet(str(package_root / 'data/tide.css'))
 os.environ['LUMA_TIDE_QUERY']='love'
-w=TideWindow(app,FixtureLibrary(package_root / 'fixtures/tide-v70.json'))
+w=TideWindow(app,FixtureLibrary(package_root / 'fixtures/tide-v70.json' if (package_root / 'fixtures/tide-v70.json').exists() else package_root.parents[1] / 'tests/fixtures/tide-v70.json'))
 from luma_appkit import icons
 for group in w.commands.visible_groups(menu=True):
  for command in group.commands:

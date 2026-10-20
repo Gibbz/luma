@@ -2,7 +2,7 @@
 
 Name:           prairie-core-apps
 Version:        0.1.0
-Release:        1.luma.104.creator20261013.1%{?dist}
+Release:        1.luma.105.creator20261019.1%{?dist}
 Summary:        Project Luma responsive core applications
 License:        Apache-2.0 AND CC-BY-SA-4.0
 URL:            https://project-luma.local/apps
@@ -13,6 +13,7 @@ Source1:        LICENSE.md
 Source2:        luma-continuity.tar.gz
 # Exact owned appearance contract for private theme checks, without a build cycle.
 Source3:        org.project_luma.shell-state.gschema.xml
+Source4:        messages-v70.json
 
 BuildRequires:  dbus-daemon
 BuildRequires:  desktop-file-utils
@@ -275,6 +276,14 @@ for regression in messages_recipient_runtime messages_details_runtime messages_h
       PYTHONPATH=%{buildroot}%{python3_sitelib} \
     python3 "tests/$regression.py"
 done
+# Composer drafts and conversation-avatar rendering against the staged payload.
+timeout 120s xvfb-run -a --server-args="-screen 0 1920x1200x24" dbus-run-session -- \
+  env GSK_RENDERER=cairo GTK_A11Y=none GSETTINGS_BACKEND=memory \
+    XDG_CONFIG_HOME=$(mktemp -d) XDG_DATA_HOME=$(mktemp -d) XDG_CACHE_HOME=$(mktemp -d) \
+    LUMA_CREATOR_SCHEMA_FILE=%{SOURCE3} LUMA_MESSAGES_FIXTURE=%{SOURCE4} \
+    LUMA_MESSAGES_STYLE_PATH=%{buildroot}%{_datadir}/prairie-core/messages.css \
+    PYTHONPATH=%{buildroot}%{python3_sitelib} \
+  python3 tests/messages_draft_images_runtime.py
 # The existing username action must be in the visible native viewport, usable
 # by real pointer input and Enter, and reject stale/duplicate UI submissions.
 username_root=$(mktemp -d)
@@ -660,7 +669,7 @@ gtk-update-icon-cache --force --quiet %{_datadir}/icons/hicolor >/dev/null 2>&1 
 %dir %{_sysconfdir}/skel/Photos
 
 %changelog
-* Sat Oct 10 2026 Project Luma <maintainers@projectluma.org> - 0.1.0-1.luma.102.creator20261010.1
+* Sat Oct 10 2026 Project Luma <maintainers@projectluma.org> - 0.1.0-1.luma.103.creator20261012.1
 - Recognize the shared Photos library through the system home directory alias.
 
 * Thu Oct 08 2026 Project Luma <maintainers@projectluma.org> - 0.1.0-1.luma.100.creator20261008.1

@@ -41,6 +41,24 @@ trap cleanup EXIT INT TERM
 mkdir -p "$rpmbuild_dir"/{BUILD,BUILDROOT,RPMS,SOURCES,SPECS,SRPMS} "$source_dir" \
   "$rpmbuild_dir/SOURCES/dependencies"
 install -m 0644 "$platform_rpm" "$rpmbuild_dir/SOURCES/dependencies/"
+# Core's native checks import the installed application service. Keep the
+# existing BuildRequires reproducible outside a pre-populated builder.
+installer_rpm="$repo_root/build/packages/luma-application-installer/RPMS/noarch/$LUMA_APPLICATION_INSTALLER_NEVRA.rpm"
+[ -f "$installer_rpm" ] || {
+  printf 'error: build the pinned application installer first: %s\n' "$installer_rpm" >&2
+  exit 1
+}
+install -m 0644 "$installer_rpm" "$rpmbuild_dir/SOURCES/dependencies/"
+# The installer's two non-Fedora runtime dependencies and the native test
+# font are pinned prerequisites too; admit their complete local closure.
+for prerequisite in \
+  "luma-apk-metadata/RPMS/x86_64/$LUMA_APK_METADATA_X86_64_NEVRA.rpm" \
+  "luma-appimage-compat/RPMS/x86_64/luma-appimage-compat-0.1.0-1.luma.1.fc44.x86_64.rpm" \
+  "figtree-fonts/RPMS/noarch/$FIGTREE_NEVRA.rpm"; do
+  path="$repo_root/build/packages/$prerequisite"
+  [ -f "$path" ] || { printf 'error: missing Core build prerequisite: %s\n' "$path" >&2; exit 1; }
+  install -m 0644 "$path" "$rpmbuild_dir/SOURCES/dependencies/"
+done
 # Luma-built packages Fedora does not ship: the Python modules the Connect
 # checks import, and the Prairie icon theme the Messages list checks its glyphs
 # against. Each is built from its own spec first.
@@ -65,6 +83,7 @@ install -m 0644 "$repo_root/tests/unit/test_prairie_photos_backend.py" \
   "$source_dir/tests/test_prairie_photos_backend.py"
 tar -C "$work_dir" -czf "$rpmbuild_dir/SOURCES/prairie-core-apps.tar.gz" \
   prairie-core-apps
+install -m 0644 "$repo_root/tests/fixtures/messages-v70.json" "$rpmbuild_dir/SOURCES/"
 install -m 0644 "$repo_root/LICENSE.md" "$rpmbuild_dir/SOURCES/LICENSE.md"
 # The runtime theme gate uses the exact production schema on a private backend.
 install -m 0644 "$repo_root/src/luma-shell-state/org.project_luma.shell-state.gschema.xml" \

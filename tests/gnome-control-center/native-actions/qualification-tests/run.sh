@@ -49,7 +49,13 @@ schemas="$XDG_DATA_HOME/gnome-shell/extensions/tilingshell@ferrarodomenico.com/s
 mkdir -p "$schemas"
 cat > "$schemas/test.gschema.xml" <<'EOF'
 <schemalist>
+ <schema id="org.project_luma.shell-state" path="/org/project-luma/shell-state/">
+  <key name="window-border-enabled" type="b"><default>true</default></key>
+  <key name="window-border-size" type="i"><range min="1" max="64"/><default>14</default></key>
+  <key name="shelf-padding" type="i"><default>14</default></key>
+ </schema>
  <schema id="org.gnome.shell.extensions.tilingshell" path="/org/gnome/shell/extensions/tilingshell/">
+  <key name="resize-complementing-windows" type="b"><default>false</default></key>
   <key name="inner-gaps" type="u"><default>4</default></key>
   <key name="active-screen-edges" type="b"><default>false</default></key>
   <key name="enable-autotiling" type="b"><default>false</default></key>

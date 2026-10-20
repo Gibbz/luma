@@ -8,6 +8,8 @@ struct _LumaNavigationSidebar {
   GtkWidget *header;
   GtkWidget *list;
   GtkWidget *footer;
+  GtkWidget *scroll;
+  gboolean footer_fade;
   char *variant;
 };
 G_DEFINE_FINAL_TYPE(LumaNavigationSidebar, luma_navigation_sidebar, GTK_TYPE_BOX)
@@ -55,8 +57,41 @@ static void luma_navigation_sidebar_dispose(GObject *object) {
   g_clear_pointer(&self->variant, g_free);
   G_OBJECT_CLASS(luma_navigation_sidebar_parent_class)->dispose(object);
 }
+static void sidebar_snapshot(GtkWidget *widget, GtkSnapshot *snapshot) {
+  LumaNavigationSidebar *self = LUMA_NAVIGATION_SIDEBAR(widget);
+  GtkAdjustment *adjustment = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(self->scroll));
+  gboolean fading = self->footer_fade && gtk_widget_get_visible(self->footer) &&
+    gtk_adjustment_get_value(adjustment) + gtk_adjustment_get_page_size(adjustment) < gtk_adjustment_get_upper(adjustment) - 1;
+  for (GtkWidget *child = gtk_widget_get_first_child(widget); child; child = gtk_widget_get_next_sibling(child)) {
+    if (!gtk_widget_get_visible(child)) continue;
+    graphene_rect_t bounds;
+    if (child != self->scroll || !fading || !gtk_widget_compute_bounds(child, widget, &bounds) || bounds.size.height <= 0) {
+      gtk_widget_snapshot_child(widget, child, snapshot);
+      continue;
+    }
+    float fade = MIN(24.f, bounds.size.height / 3.f);
+    GskColorStop stops[] = {{0, {1, 1, 1, 1}}, {1 - fade / bounds.size.height, {1, 1, 1, 1}}, {1, {1, 1, 1, 0}}};
+    graphene_point_t start = GRAPHENE_POINT_INIT(bounds.origin.x, bounds.origin.y);
+    graphene_point_t end = GRAPHENE_POINT_INIT(bounds.origin.x, bounds.origin.y + bounds.size.height);
+    gtk_snapshot_push_mask(snapshot, GSK_MASK_MODE_ALPHA);
+    gtk_snapshot_append_linear_gradient(snapshot, &bounds, &start, &end, stops, G_N_ELEMENTS(stops));
+    gtk_snapshot_pop(snapshot);
+    gtk_widget_snapshot_child(widget, child, snapshot);
+    gtk_snapshot_pop(snapshot);
+  }
+}
+static void sidebar_scroll_changed(GtkAdjustment *adjustment G_GNUC_UNUSED, GtkWidget *widget) {
+  gtk_widget_queue_draw(widget);
+}
+void luma_navigation_sidebar_set_footer_fade(LumaNavigationSidebar *self, gboolean enabled) {
+  g_return_if_fail(LUMA_IS_NAVIGATION_SIDEBAR(self));
+  self->footer_fade = enabled;
+  gtk_widget_queue_draw(GTK_WIDGET(self));
+}
+
 static void luma_navigation_sidebar_class_init(LumaNavigationSidebarClass *klass) {
   G_OBJECT_CLASS(klass)->dispose = luma_navigation_sidebar_dispose;
+  GTK_WIDGET_CLASS(klass)->snapshot = sidebar_snapshot;
 }
 
 static void luma_navigation_sidebar_init(LumaNavigationSidebar *self) {
@@ -70,6 +105,11 @@ static void luma_navigation_sidebar_init(LumaNavigationSidebar *self) {
   gtk_widget_set_visible(self->header, FALSE);
   gtk_box_append(GTK_BOX(self), self->header);
   GtkWidget *scroll = gtk_scrolled_window_new();
+  self->scroll = scroll;
+  self->footer_fade = TRUE;
+  GtkAdjustment *adjustment = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(scroll));
+  g_signal_connect_object(adjustment, "value-changed", G_CALLBACK(sidebar_scroll_changed), self, 0);
+  g_signal_connect_object(adjustment, "changed", G_CALLBACK(sidebar_scroll_changed), self, 0);
   gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
   /* A visible navigation scrollbar gets its own track at the sidebar's edge;
    * it must never paint over destination labels or the selected chip. */

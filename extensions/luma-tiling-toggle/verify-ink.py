@@ -21,8 +21,8 @@ SHEET = Path(sys.argv[1] if len(sys.argv) > 1 else
 PANES = {
     "light": ["#ffffff", "#f1f2f3"],
     "dark": ["#2a2f36", "#21252b"],
-    "frost": ["#2a2f36", "rgba(28,33,40,0.88)"],
-    "glass": ["#2a2f36", "rgba(14,19,26,0.82)"],
+    "frost": ["rgba(248,249,250,0.88)"],
+    "glass": ["rgba(250,250,251,0.80)"],
 }
 COLOUR = re.compile(r"#[0-9a-fA-F]{6}|rgba?\([^)]*\)")
 

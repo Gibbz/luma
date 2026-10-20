@@ -1,60 +1,113 @@
 /* SPDX-License-Identifier: Apache-2.0 */
-/* Tiling's layout picker in Quick Options follows the appearance mode Quick
- * Options is showing: every value below is from the Shell's ink ledger
- * (js/ui/lumaSurfaceMaterials.js SURFACE_INK and js/ui/lumaControlInk.js
- * CONTROL_INK) for that mode. Layouts are a neutral frame and tiles; the
- * chosen one takes the state slate and a 2px ring, the one filled state of
- * ADR-043. tests/verify-ink.py measures each pair from %check. */
-
-/* Geometry is the same in every mode. */
-.luma-tiling-layouts { padding: 4px 8px 12px; }
-.luma-tiling-layouts-box { spacing: 8px; }
+/* Neutral outlines and one state slate, following Luma's surface/control ink.
+ * Runtime material classes follow the actual Shell foreground, including
+ * older frost/glass surfaces. No new blur or nested opaque card is introduced. */
+.luma-tiling-layouts-box { padding: 4px 6px 8px; spacing: 8px; font-family: Figtree; font-size: 13px; background-color: transparent; border: none; }
 .luma-tiling-layouts-row { spacing: 4px; }
-.luma-tiling-display-name { font-weight: 700; padding-top: 4px; }
-.luma-tiling-actions-rule { margin: 4px 8px 6px; }
-.luma-tiling-preview {
-  padding: 6px; margin: 2px;
-  border-radius: 8px; border: 0;
-  background-color: transparent; }
-.luma-tiling-preview-frame { border-radius: 4px; border-width: 1px; border-style: solid; }
-.luma-tiling-preview-tile { border-radius: 2px; border-width: 1px; border-style: solid; }
-
-/* Before a mode class arrives (or if the Shell never sets one), a neutral
- * grey that holds 3:1 on both the light and the dark detail. */
-.luma-tiling-preview:hover { background-color: rgba(125,131,139,0.14); }
-.luma-tiling-preview:checked { box-shadow: inset 0 0 0 2px #7d838b; }
-.luma-tiling-preview-frame { background-color: transparent; border-color: rgba(125,131,139,0.30); }
+.luma-tiling-display-row { spacing: 8px; }
+.luma-tiling-display-name { font-size: 13px; font-weight: 700; }
+.luma-tiling-caption { font-size: 11.5px; font-weight: 500; }
+.luma-tiling-current { padding: 6px 8px; border-radius: 10px; font-size: 13px; font-weight: 600; text-align: left; }
+.luma-tiling-pager { spacing: 8px; }
+.luma-tiling-nav { border-radius: 10px; }
+.luma-tiling-nav:insensitive { opacity: 0.3; }
+.luma-tiling-search { min-height: 20px; padding: 8px 12px; border-radius: 12px;
+  border-width: 1px; border-style: solid; font-family: Figtree; font-size: 13.5px; font-weight: 400; }
+.luma-tiling-empty { padding: 16px 8px; }
+.luma-tiling-actions-rule { margin: 2px 8px 4px; }
+.luma-tiling-action { min-height: 24px; padding: 8px 10px; spacing: 10px; font-family: Figtree; font-size: 13px; font-weight: 600; }
+.luma-tiling-preview { min-width: 68px; min-height: 40px; padding: 8px 6px;
+  margin: 2px; border-radius: 10px; border: 0; background-color: transparent; }
+.luma-tiling-card { spacing: 6px; }
+.luma-tiling-card-name { font-size: 11.5px; font-weight: 500; text-align: center; }
+.luma-tiling-preview-frame { border-radius: 6px; border-width: 1px; border-style: solid; }
+.luma-tiling-preview-tile { border-radius: 3px; border-width: 1px; border-style: solid; }
+.luma-tiling-preview-frame { background-color: transparent; border-color: #7d838b; }
 .luma-tiling-preview-tile { background-color: rgba(125,131,139,0.22); border-color: #7d838b; }
-.luma-tiling-preview:checked .luma-tiling-preview-tile { background-color: #7d838b; border-color: #7d838b; }
-
-/* light */
 .luma-surface-light .luma-tiling-display-name { color: rgba(52,56,61,0.78); }
-.luma-surface-light .luma-tiling-preview:hover { background-color: rgba(25,27,31,0.06); }
+.luma-surface-light .luma-tiling-caption, .luma-surface-light .luma-tiling-current,
+.luma-surface-light .luma-tiling-card-name, .luma-surface-light .luma-tiling-empty,
+.luma-surface-light .luma-tiling-nav, .luma-surface-light .luma-tiling-action { color: #34383d; }
+.luma-surface-light .luma-tiling-preview:hover, .luma-surface-light .luma-tiling-nav:hover,
+.luma-surface-light .luma-tiling-current:hover { background-color: rgba(25,27,31,0.06); }
 .luma-surface-light .luma-tiling-preview:checked { box-shadow: inset 0 0 0 2px #61728a; }
 .luma-surface-light .luma-tiling-preview-frame { background-color: transparent; border-color: rgba(25,27,31,0.12); }
 .luma-surface-light .luma-tiling-preview-tile { background-color: rgba(52,56,61,0.14); border-color: rgba(52,56,61,0.62); }
 .luma-surface-light .luma-tiling-preview:checked .luma-tiling-preview-tile { background-color: #61728a; border-color: #61728a; }
-
-/* dark */
 .luma-surface-dark .luma-tiling-display-name { color: rgba(231,233,232,0.80); }
-.luma-surface-dark .luma-tiling-preview:hover { background-color: rgba(255,255,255,0.06); }
+.luma-surface-dark .luma-tiling-caption, .luma-surface-dark .luma-tiling-current,
+.luma-surface-dark .luma-tiling-card-name, .luma-surface-dark .luma-tiling-empty,
+.luma-surface-dark .luma-tiling-nav, .luma-surface-dark .luma-tiling-action { color: #e7e9e8; }
+.luma-surface-dark .luma-tiling-preview:hover, .luma-surface-dark .luma-tiling-nav:hover,
+.luma-surface-dark .luma-tiling-current:hover { background-color: rgba(255,255,255,0.06); }
 .luma-surface-dark .luma-tiling-preview:checked { box-shadow: inset 0 0 0 2px #8a99a8; }
 .luma-surface-dark .luma-tiling-preview-frame { background-color: transparent; border-color: rgba(255,255,255,0.10); }
 .luma-surface-dark .luma-tiling-preview-tile { background-color: rgba(231,233,232,0.14); border-color: rgba(231,233,232,0.62); }
 .luma-surface-dark .luma-tiling-preview:checked .luma-tiling-preview-tile { background-color: #8a99a8; border-color: #8a99a8; }
+.luma-surface-frost .luma-tiling-display-name { color: #394047; }
+.luma-surface-frost .luma-tiling-caption, .luma-surface-frost .luma-tiling-current,
+.luma-surface-frost .luma-tiling-card-name, .luma-surface-frost .luma-tiling-empty,
+.luma-surface-frost .luma-tiling-nav, .luma-surface-frost .luma-tiling-action { color: #1f262d; }
+.luma-surface-frost .luma-tiling-preview:hover, .luma-surface-frost .luma-tiling-nav:hover,
+.luma-surface-frost .luma-tiling-current:hover { background-color: rgba(25,27,31,0.06); }
+.luma-surface-frost .luma-tiling-preview:checked { box-shadow: inset 0 0 0 2px #4a5a6e; }
+.luma-surface-frost .luma-tiling-preview-frame { background-color: transparent; border-color: rgba(25,27,31,0.12); }
+.luma-surface-frost .luma-tiling-preview-tile { background-color: rgba(31,38,45,0.10); border-color: rgba(31,38,45,0.70); }
+.luma-surface-frost .luma-tiling-preview:checked .luma-tiling-preview-tile { background-color: #4a5a6e; border-color: #4a5a6e; }
+.luma-surface-glass .luma-tiling-display-name { color: #1f242a; }
+.luma-surface-glass .luma-tiling-caption, .luma-surface-glass .luma-tiling-current,
+.luma-surface-glass .luma-tiling-card-name, .luma-surface-glass .luma-tiling-empty,
+.luma-surface-glass .luma-tiling-nav, .luma-surface-glass .luma-tiling-action { color: #161b20; }
+.luma-surface-glass .luma-tiling-preview:hover, .luma-surface-glass .luma-tiling-nav:hover,
+.luma-surface-glass .luma-tiling-current:hover { background-color: rgba(25,27,31,0.06); }
+.luma-surface-glass .luma-tiling-preview:checked { box-shadow: inset 0 0 0 2px #3b4757; }
+.luma-surface-glass .luma-tiling-preview-frame { background-color: transparent; border-color: rgba(25,27,31,0.12); }
+.luma-surface-glass .luma-tiling-preview-tile { background-color: rgba(22,27,32,0.10); border-color: rgba(22,27,32,0.70); }
+.luma-surface-glass .luma-tiling-preview:checked .luma-tiling-preview-tile { background-color: #3b4757; border-color: #3b4757; }
+.luma-tiling-light-material .luma-tiling-display-name { color: rgba(52,56,61,0.78); }
+.luma-tiling-light-material .luma-tiling-caption, .luma-tiling-light-material .luma-tiling-current,
+.luma-tiling-light-material .luma-tiling-card-name, .luma-tiling-light-material .luma-tiling-empty,
+.luma-tiling-light-material .luma-tiling-nav, .luma-tiling-light-material .luma-tiling-action { color: #34383d; }
+.luma-tiling-light-material .luma-tiling-preview:hover, .luma-tiling-light-material .luma-tiling-nav:hover,
+.luma-tiling-light-material .luma-tiling-current:hover { background-color: rgba(25,27,31,0.06); }
+.luma-tiling-light-material .luma-tiling-preview:checked { box-shadow: inset 0 0 0 2px #61728a; }
+.luma-tiling-light-material .luma-tiling-preview-frame { background-color: transparent; border-color: rgba(25,27,31,0.12); }
+.luma-tiling-light-material .luma-tiling-preview-tile { background-color: rgba(52,56,61,0.14); border-color: rgba(52,56,61,0.62); }
+.luma-tiling-light-material .luma-tiling-preview:checked .luma-tiling-preview-tile { background-color: #61728a; border-color: #61728a; }
+.luma-tiling-dark-material .luma-tiling-display-name { color: rgba(231,233,232,0.80); }
+.luma-tiling-dark-material .luma-tiling-caption, .luma-tiling-dark-material .luma-tiling-current,
+.luma-tiling-dark-material .luma-tiling-card-name, .luma-tiling-dark-material .luma-tiling-empty,
+.luma-tiling-dark-material .luma-tiling-nav, .luma-tiling-dark-material .luma-tiling-action { color: #e7e9e8; }
+.luma-tiling-dark-material .luma-tiling-preview:hover, .luma-tiling-dark-material .luma-tiling-nav:hover,
+.luma-tiling-dark-material .luma-tiling-current:hover { background-color: rgba(255,255,255,0.06); }
+.luma-tiling-dark-material .luma-tiling-preview:checked { box-shadow: inset 0 0 0 2px #8a99a8; }
+.luma-tiling-dark-material .luma-tiling-preview-frame { background-color: transparent; border-color: rgba(255,255,255,0.10); }
+.luma-tiling-dark-material .luma-tiling-preview-tile { background-color: rgba(231,233,232,0.14); border-color: rgba(231,233,232,0.62); }
+.luma-tiling-dark-material .luma-tiling-preview:checked .luma-tiling-preview-tile { background-color: #8a99a8; border-color: #8a99a8; }
+.luma-surface-light .luma-tiling-preview:focus, .luma-surface-light .luma-tiling-nav:focus, .luma-surface-light .luma-tiling-current:focus { background-color: rgba(25,27,31,0.06); }
+.luma-surface-dark .luma-tiling-preview:focus, .luma-surface-dark .luma-tiling-nav:focus, .luma-surface-dark .luma-tiling-current:focus { background-color: rgba(255,255,255,0.06); }
+.luma-surface-frost .luma-tiling-preview:focus, .luma-surface-frost .luma-tiling-nav:focus, .luma-surface-frost .luma-tiling-current:focus { background-color: rgba(25,27,31,0.06); }
+.luma-surface-glass .luma-tiling-preview:focus, .luma-surface-glass .luma-tiling-nav:focus, .luma-surface-glass .luma-tiling-current:focus { background-color: rgba(25,27,31,0.06); }
+.luma-tiling-light-material .luma-tiling-search { background-color: rgba(20,22,27,0.085); border-color: rgba(39,48,56,0.095); color: #34383d; box-shadow: none; }
+.luma-tiling-light-material .luma-tiling-search:focus { border-color: #61728a; }
+.luma-tiling-light-material .luma-tiling-preview:focus, .luma-tiling-light-material .luma-tiling-nav:focus,
+.luma-tiling-light-material .luma-tiling-current:focus { background-color: rgba(25,27,31,0.06); }
+.luma-tiling-dark-material .luma-tiling-search { background-color: rgba(255,255,255,0.038); border-color: rgba(255,255,255,0.08); color: #e7e9e8; box-shadow: none; }
+.luma-tiling-dark-material .luma-tiling-search:focus { border-color: #8a99a8; }
+.luma-tiling-dark-material .luma-tiling-preview:focus, .luma-tiling-dark-material .luma-tiling-nav:focus,
+.luma-tiling-dark-material .luma-tiling-current:focus { background-color: rgba(255,255,255,0.06); }
+/* Current light-veiled material keeps its deeper shared state slate. */
+.luma-surface-frost.luma-tiling-light-material .luma-tiling-preview-tile { border-color: #1f262d; }
+.luma-surface-frost.luma-tiling-light-material .luma-tiling-preview:checked { box-shadow: inset 0 0 0 2px #4a5a6e; }
+.luma-surface-frost.luma-tiling-light-material .luma-tiling-preview:checked .luma-tiling-preview-tile { background-color: #4a5a6e; border-color: #4a5a6e; }
+.luma-surface-frost.luma-tiling-light-material .luma-tiling-search:focus { border-color: #4a5a6e; }
+/* Current light-veiled material keeps its deeper shared state slate. */
+.luma-surface-glass.luma-tiling-light-material .luma-tiling-preview-tile { border-color: #161b20; }
+.luma-surface-glass.luma-tiling-light-material .luma-tiling-preview:checked { box-shadow: inset 0 0 0 2px #3b4757; }
+.luma-surface-glass.luma-tiling-light-material .luma-tiling-preview:checked .luma-tiling-preview-tile { background-color: #3b4757; border-color: #3b4757; }
+.luma-surface-glass.luma-tiling-light-material .luma-tiling-search:focus { border-color: #3b4757; }
 
-/* frost */
-.luma-surface-frost .luma-tiling-display-name { color: rgba(255,255,255,0.88); }
-.luma-surface-frost .luma-tiling-preview:hover { background-color: rgba(255,255,255,0.07); }
-.luma-surface-frost .luma-tiling-preview:checked { box-shadow: inset 0 0 0 2px #a9b5c1; }
-.luma-surface-frost .luma-tiling-preview-frame { background-color: transparent; border-color: rgba(255,255,255,0.18); }
-.luma-surface-frost .luma-tiling-preview-tile { background-color: rgba(255,255,255,0.14); border-color: rgba(255,255,255,0.62); }
-.luma-surface-frost .luma-tiling-preview:checked .luma-tiling-preview-tile { background-color: #a9b5c1; border-color: #a9b5c1; }
-
-/* glass */
-.luma-surface-glass .luma-tiling-display-name { color: rgba(255,255,255,0.90); }
-.luma-surface-glass .luma-tiling-preview:hover { background-color: rgba(255,255,255,0.07); }
-.luma-surface-glass .luma-tiling-preview:checked { box-shadow: inset 0 0 0 2px #a9b5c1; }
-.luma-surface-glass .luma-tiling-preview-frame { background-color: transparent; border-color: rgba(255,255,255,0.22); }
-.luma-surface-glass .luma-tiling-preview-tile { background-color: rgba(255,255,255,0.14); border-color: rgba(255,255,255,0.62); }
-.luma-surface-glass .luma-tiling-preview:checked .luma-tiling-preview-tile { background-color: #a9b5c1; border-color: #a9b5c1; }
+.luma-tiling-light-material .popup-menu-item.luma-sheet-link.luma-tiling-action:hover,
+.luma-tiling-light-material .popup-menu-item.luma-sheet-link.luma-tiling-action:focus { background-color: rgba(25,27,31,0.06); }
+.luma-tiling-dark-material .popup-menu-item.luma-sheet-link.luma-tiling-action:hover,
+.luma-tiling-dark-material .popup-menu-item.luma-sheet-link.luma-tiling-action:focus { background-color: rgba(255,255,255,0.06); }

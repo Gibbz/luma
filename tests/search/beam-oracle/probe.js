@@ -36,7 +36,7 @@ function labelChecks(dialog) {
     const bar = scroll.get_children().find(c => c.constructor.name.includes('ScrollBar') && c.vertical && c.visible);
     const barLeft = bar ? bar.get_transformed_position()[0] : sx + sw;
     const problems = [];
-    for (const row of dialog._results._merged.get_children().filter(r => r.visible)) {
+    for (const row of dialog._results._merged.get_children().filter(r => r.visible && r._lumaRank)) {
         const label = row._kindLabel;
         if (!label?.mapped || label.opacity === 0)
             continue;
@@ -70,7 +70,7 @@ async function shot(name, actor) {
 
 function rows(dialog) {
     const merged = dialog._results._merged;
-    return merged.get_children().filter(r => r.visible).map(r => ({
+    return merged.get_children().filter(r => r.visible && r._lumaRank).map(r => ({
         title: r.metaInfo.name,
         detail: r.metaInfo.description ?? '',
         kind: r._kindLabel?.text ?? '',

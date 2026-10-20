@@ -2,7 +2,7 @@
 
 Name:           luma-search
 Version:        0.1.0
-Release:        1.luma.7%{?dist}
+Release:        1.luma.8%{?dist}
 Summary:        Shared Project Luma system Search service
 License:        Apache-2.0
 URL:            https://project-luma.local/
@@ -27,12 +27,16 @@ Source17:       settings-pages.json
 Source18:       settings-cases.json
 Source19:       places.py
 Source20:       filer-places.json
+Source21:       depot.py
+Source22:       org.projectluma.Depot.search-provider.ini
+Source23:       test_depot_results.py
 BuildArch:      noarch
 BuildRequires:  systemd-rpm-macros
 BuildRequires:  python3
 Requires:       glib2
 Requires:       python3-gobject-base
 Requires:       gtk4
+Requires:       luma-application-installer
 # Files and folders come from the LocalSearch index through tinysparql.
 Requires:       libtinysparql
 Recommends:     localsearch
@@ -50,16 +54,17 @@ cp %{SOURCE5} LICENSE
 %check
 mkdir -p check/src/luma-search/luma_search check/tests/unit check/tests/search
 cp %{SOURCE0} %{SOURCE1} check/src/luma-search/
-cp %{SOURCE6} %{SOURCE7} %{SOURCE8} %{SOURCE11} %{SOURCE12} %{SOURCE19} check/src/luma-search/luma_search/
+cp %{SOURCE6} %{SOURCE7} %{SOURCE8} %{SOURCE11} %{SOURCE12} %{SOURCE19} %{SOURCE21} check/src/luma-search/luma_search/
 cp %{SOURCE14} check/tests/unit/
 cp %{SOURCE17} %{SOURCE20} check/src/luma-search/
-cp %{SOURCE15} %{SOURCE16} %{SOURCE18} check/tests/search/
+cp %{SOURCE15} %{SOURCE16} %{SOURCE18} %{SOURCE23} check/tests/search/
 (cd check && python3 -m unittest tests.unit.test_luma_search -v) >check.log 2>&1 || { cat check.log; exit 1; }
 cat check.log
 # A suite that reached nothing, or skipped the Filer places tests, is a failure.
 grep -Eq "^Ran ([2-9][0-9]|[1-9][0-9]{2,}) tests" check.log
 test "$(grep -c "FilerPlacesTests.* ok$" check.log)" -ge 8
 (cd check && python3 tests/search/test_ranking_vectors.py -v)
+(cd check && python3 tests/search/test_depot_results.py -v)
 
 %install
 install -D -m 0755 %{SOURCE0} %{buildroot}%{_libexecdir}/luma-search-service
@@ -75,6 +80,8 @@ install -D -m 0644 %{SOURCE7} %{buildroot}%{_libexecdir}/luma_search/contract.py
 install -D -m 0644 %{SOURCE8} %{buildroot}%{_libexecdir}/luma_search/providers.py
 install -D -m 0644 %{SOURCE11} %{buildroot}%{_libexecdir}/luma_search/ranking.py
 install -D -m 0644 %{SOURCE12} %{buildroot}%{_libexecdir}/luma_search/files.py
+install -D -m 0644 %{SOURCE21} %{buildroot}%{_libexecdir}/luma_search/depot.py
+install -D -m 0644 %{SOURCE22} %{buildroot}%{_datadir}/gnome-shell/search-providers/org.projectluma.Depot.search-provider.ini
 install -D -m 0644 %{SOURCE19} %{buildroot}%{_libexecdir}/luma_search/places.py
 install -D -m 0644 %{SOURCE17} %{buildroot}%{_datadir}/luma-search/settings-pages.json
 install -D -m 0644 %{SOURCE20} %{buildroot}%{_datadir}/luma-search/filer-places.json
@@ -96,6 +103,7 @@ install -D -m 0644 %{SOURCE10} \
 %{_datadir}/glib-2.0/schemas/org.projectluma.search.gschema.xml
 %{_datadir}/glib-2.0/schemas/50_luma-search-localsearch.gschema.override
 %{_datadir}/luma-search/
+%{_datadir}/gnome-shell/search-providers/org.projectluma.Depot.search-provider.ini
 
 %posttrans
 glib-compile-schemas %{_datadir}/glib-2.0/schemas &>/dev/null || :

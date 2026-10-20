@@ -923,6 +923,11 @@ class ScrollView(Gtk.ScrolledWindow):
         Gtk.ScrolledWindow.do_snapshot(self, snapshot)
         snapshot.pop()
 
+    def set_bottom_fade(self, enabled: bool) -> None:
+        """Fade scrolling content at its lower edge until the final row is reached."""
+        self._fade_bottom = bool(enabled)
+        self.queue_draw()
+
     def set_overlay_scrolling(self, overlay: bool) -> None:  # noqa: D401 - keeps GTK's signature
         """Kept an overlay: a reserved scrollbar gutter is what this component exists to prevent."""
         super().set_overlay_scrolling(True)
@@ -1061,6 +1066,12 @@ class NavigationSidebar(Gtk.Box):
         """Pin a widget to the foot of the sidebar."""
         self.footer.append(widget)
         self.footer.set_visible(True)
+        self._scroll.set_bottom_fade(getattr(self, "_footer_fade", True))
+
+    def set_footer_fade(self, enabled: bool) -> None:
+        """Fade the list into its fixed footer; the footer itself stays opaque."""
+        self._footer_fade = bool(enabled)
+        self._scroll.set_bottom_fade(self._footer_fade and self.footer.get_visible())
 
     def clear(self) -> None:
         while child := self.list.get_first_child():

@@ -205,6 +205,14 @@ class LumaUIMessagesWindow(MessagesWindow):
             self.surface.render_details()
             self.surface._composer()
 
+    def _render_draft_content(self) -> None:
+        super()._render_draft_content()
+        if self.surface is not None and self.surface.current is not None:
+            entry = self.surface.current
+            if entry.get("service") is self.service and entry.get("address") == self.current_address:
+                self.surface._remember_draft()
+                self.surface._composer()
+
     def _notice(self, message: str) -> None:
         if self.surface is not None:
             self.surface._notice(message)

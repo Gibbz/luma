@@ -148,6 +148,11 @@ class CoverArt(Gtk.Widget):
             self.emit('artwork-loaded', texture)
 
     @property
+    def paintable(self) -> Gdk.Paintable | None:
+        """The current decoded artwork, including a texture already in the cache."""
+        return self._picture
+
+    @property
     def generated(self) -> bool:
         """Whether the kit is drawing the cover (no real art yet)."""
         return self._picture is None

@@ -57,11 +57,11 @@ with test_application('org.projectluma.TideNavigationTest') as (app, root):
     artist=named(window,'td-artist-Artist');artist.emit('clicked')
     window.open_search();window.search_item.entry.set_text('Song 2')
     settle(lambda:window.query=='Song 2' and len(window._rows)==1)
-    assert window.view=='songs' and window.trail.current.title=='Results'
+    assert window.view=='search' and window.trail.current.title=='Search results'
     assert window._rows[0].song.title=='Song 2'
     window.search_item.entry.set_text('')
-    settle(lambda:window.query=='' and len(window._rows)==2)
-    assert window.view=='songs' and window.trail.current.title=='Songs'
+    settle(lambda:window.query=='' and not window._rows)
+    assert window.view=='search' and window.trail.current.title=='Search results'
     window.close_search()
     assert window.view=='album'
     assert window.go_back() and window.view=='artists'

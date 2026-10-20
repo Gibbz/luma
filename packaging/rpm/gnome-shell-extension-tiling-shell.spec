@@ -8,7 +8,7 @@
 
 Name:           gnome-shell-extension-tiling-shell
 Version:        17.3
-Release:        1.luma.24%{?dist}
+Release:        1.luma.26%{?dist}
 Summary:        Advanced tiling window management for GNOME Shell
 License:        GPL-3.0-or-later
 URL:            https://github.com/domferr/tilingshell
@@ -16,6 +16,7 @@ Source0:        tilingshell-17.3-gse76.zip
 Source1:        LICENSE
 # Luma defaults: no panel button (tiling lives in Quick Options), outer gap.
 Source2:        90_luma-tiling-shell.gschema.override
+Source3:        editor-state.mjs
 Patch0:         0001-disconnect-signals-before-destroying-indicator.patch
 Patch1:         0002-luma-visible-drag-layout.patch
 Patch2:         0004-luma-quick-settings-interface.patch
@@ -30,6 +31,8 @@ Patch10:        0013-luma-late-placed-windows-stay-visible.patch
 Patch11:        0014-luma-tiles-follow-the-work-area.patch
 Patch12:        0015-luma-a-maximized-window-is-the-largest-tile.patch
 Patch13:        0016-luma-windows-open-straight-into-their-tile.patch
+Patch14:        0017-luma-floating-zone-editor-actions.patch
+Patch15:        0018-independent-window-spacing-and-resize.patch
 BuildArch:      noarch
 BuildRequires:  glib2
 BuildRequires:  nodejs
@@ -61,6 +64,8 @@ find . -type f -exec chmod 0644 {} +
 %patch -P 11 -p1
 %patch -P 12 -p1
 %patch -P 13 -p1
+%patch -P 14 -p1
+%patch -P 15 -p1
 cp %{SOURCE1} ../LICENSE
 install -m 0644 %{SOURCE2} schemas/
 
@@ -71,6 +76,7 @@ glib-compile-schemas source/schemas
 # Every shipped script parses, and the schema is valid.
 find source -name '*.js' -print0 | xargs -0 -n1 node --check
 glib-compile-schemas --strict --dry-run source/schemas
+node %{SOURCE3} source
 # The Luma defaults apply: no panel button, an outer gap on every edge; the
 # one-time migration and the tile hold ship (0014).
 test "$(GSETTINGS_SCHEMA_DIR=source/schemas gsettings get org.gnome.shell.extensions.tilingshell show-indicator)" = false
