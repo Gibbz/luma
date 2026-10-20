@@ -49,6 +49,16 @@ installer_rpm="$repo_root/build/packages/luma-application-installer/RPMS/noarch/
   exit 1
 }
 install -m 0644 "$installer_rpm" "$rpmbuild_dir/SOURCES/dependencies/"
+# The installer's two non-Fedora runtime dependencies and the native test
+# font are pinned prerequisites too; admit their complete local closure.
+for prerequisite in \
+  "luma-apk-metadata/RPMS/x86_64/$LUMA_APK_METADATA_X86_64_NEVRA.rpm" \
+  "luma-appimage-compat/RPMS/x86_64/luma-appimage-compat-0.1.0-1.luma.1.fc44.x86_64.rpm" \
+  "figtree-fonts/RPMS/noarch/$FIGTREE_NEVRA.rpm"; do
+  path="$repo_root/build/packages/$prerequisite"
+  [ -f "$path" ] || { printf 'error: missing Core build prerequisite: %s\n' "$path" >&2; exit 1; }
+  install -m 0644 "$path" "$rpmbuild_dir/SOURCES/dependencies/"
+done
 # Luma-built packages Fedora does not ship: the Python modules the Connect
 # checks import, and the Prairie icon theme the Messages list checks its glyphs
 # against. Each is built from its own spec first.

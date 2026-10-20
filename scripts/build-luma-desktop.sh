@@ -34,6 +34,7 @@ fi
 "$repo_root/scripts/packages/build-luma-android-runtime.sh"
 "$repo_root/scripts/packages/build-luma-relay.sh"
 "$repo_root/scripts/packages/build-luma-apk-metadata.sh"
+"$repo_root/scripts/packages/build-luma-appimage-compat.sh"
 "$repo_root/scripts/packages/build-luma-application-installer.sh"
 "$repo_root/scripts/packages/build-wine-relay-integration.sh"
 "$repo_root/scripts/packages/build-luma-python-app.sh" luma-calculator
