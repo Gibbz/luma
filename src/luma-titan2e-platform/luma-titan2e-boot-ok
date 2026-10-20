@@ -1,0 +1,42 @@
+#!/usr/bin/python3
+# SPDX-License-Identifier: Apache-2.0
+"""Mark slot a as successfully booted in the AOSP boot-control block (misc +2048),
+as Android's boot-complete step does, so the bootloader stops spending slot-a
+retries and falling back to the other slot."""
+import glob
+import os
+import struct
+import zlib
+
+MAGIC = 0x42414342  # "BCAB"
+
+
+def misc_device() -> str:
+    for uevent in glob.glob("/sys/class/block/*/uevent"):
+        with open(uevent) as f:
+            if "PARTNAME=misc\n" in f.read():
+                return "/dev/" + uevent.split("/")[4]
+    raise SystemExit("no misc partition")
+
+
+def main() -> None:
+    fd = os.open(misc_device(), os.O_RDWR | os.O_SYNC)
+    os.lseek(fd, 2048, 0)
+    bc = bytearray(os.read(fd, 32))
+    if struct.unpack_from("<I", bc, 4)[0] != MAGIC or struct.unpack_from("<I", bc, 28)[0] != zlib.crc32(bc[:28]):
+        raise SystemExit("misc: no valid boot-control block, leaving it alone")
+    slot = struct.unpack_from("<H", bc, 12)[0]
+    new = (slot & ~0x70) | (1 << 4) | (1 << 7)  # slot a: tries_remaining 1, successful_boot
+    if new == slot:
+        print("slot a already marked successful")
+        return
+    struct.pack_into("<H", bc, 12, new)
+    struct.pack_into("<I", bc, 28, zlib.crc32(bc[:28]))
+    os.lseek(fd, 2048, 0)
+    os.write(fd, bc)
+    os.fsync(fd)
+    print("slot a marked successful (%04x -> %04x)" % (slot, new))
+
+
+if __name__ == "__main__":
+    main()

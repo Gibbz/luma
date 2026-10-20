@@ -15,6 +15,17 @@ export LUMA_DEVICE_CLASS=${LUMA_DEVICE_CLASS:-$device_class}
 export LUMA_PRESENTATION_MODE=${LUMA_PRESENTATION_MODE:-fullscreen-mobile}
 export LUMA_INPUT_MODE=${LUMA_INPUT_MODE:-touch}
 
+# Device packages add session variables (KEY=VALUE lines) in session.d.
+for env_file in /usr/lib/luma/session.d/*.env /etc/luma/session.d/*.env; do
+  [ -r "$env_file" ] || continue
+  while IFS='=' read -r key value; do
+    case "$key" in
+      ''|'#'*) continue ;;
+    esac
+    export "$key=$value"
+  done <"$env_file"
+done
+
 # The renderer and every application it launches inherit these capabilities.
 # environment.d supplies the same stable device class to session user services.
 exec /opt/luma/phosh/bin/phosh-session "$@"

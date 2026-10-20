@@ -2,7 +2,7 @@
 
 Name:           luma-greeter
 Version:        0.1.0
-Release:        1.luma.15%{?dist}
+Release:        1.luma.18%{?dist}
 Summary:        Project Luma native handheld Presence greeter
 License:        Apache-2.0
 URL:            https://projectluma.org/
@@ -109,6 +109,10 @@ grep -Fq 'org.freedesktop.login1.set-brightness' \
 %{_datadir}/polkit-1/rules.d/60-luma-greeter-brightness.rules
 
 %changelog
+* Mon Oct 19 2026 Project Luma <maintainers@projectluma.org> - 0.1.0-1.luma.18
+- Start the compositor with /etc/phosh/phoc.ini when a device package
+  provides it, as phosh-session does, so output scale survives the handoff.
+
 * Mon Aug 31 2026 Project Luma <maintainers@projectluma.org> - 0.1.0-1.luma.15
 - Declare only the session type. Supplying XDG_VTNR made logind treat the new
   session as the seat's owner, activate it, and pause the running compositor's

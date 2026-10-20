@@ -17,19 +17,25 @@ devices/
     firmware.manifest         firmware file names and SHA-256, no firmware
     INSTALL.md                the install guide, as published
     tests/test_<vendor>_<codename>*.py
+    README.md                 optional: hardware status and where the sources are
+    source-pins.json          optional: upstream inputs and their revisions
+    public-file-manifest.json optional: SHA-256 of the files the device adds
 socs/
   soc.schema.json             schema for every soc.toml
   <vendor>/<family>/soc.toml  shared by every device on that chip family
 ```
 
-A device directory holds exactly those five entries. Anything else fails CI.
+A device directory holds those five entries and, optionally, the three
+marked optional. Anything else fails CI.
 
 **Kernels** are in [SimplyLuma/linux](https://github.com/SimplyLuma/linux), one
 branch per SoC family (`milos` for SM7635). Each kernel Luma ships has a tag,
 `luma-<codename>-<release>-<kernel release>`, whose message names the
 published boot image and the SHA-256 of its kernel, DTB, `.config` and modules.
 The device's exact `.config`, device-tree overlays and build steps are in
-`luma/<codename>/<release>/` on that branch. `device.toml` points at the tag.
+`luma/<codename>/<release>/` on that branch. `device.toml` points at the tag. A device whose kernel has no tag yet
+(tier `experimental` or `community`) names instead, under `kernel.source`, a JSON
+file in this repository that pins the upstream commit, patches and config.
 
 **SoC config** (`socs/<vendor>/<family>/soc.toml`) holds the kernel branch,
 boot image format, page size, load offsets and firmware directory. A second

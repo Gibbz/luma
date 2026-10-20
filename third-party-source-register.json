@@ -2876,6 +2876,123 @@
       "license_identifiers": [],
       "origin_document": "docs/devices.md",
       "origin_line": 141
+    },
+    {
+      "component": "LUMA-LINUX-MT6878-TITAN2-ELITE",
+      "upstream": [
+        {
+          "name": "MT6878-mainline/linux",
+          "url": "https://github.com/MT6878-mainline/linux"
+        }
+      ],
+      "recorded_revisions": [
+        "12f2e9f040d0049f3f5ce5a7e53bf5ef27b46422"
+      ],
+      "recorded_versions": [
+        "7.2.0-luma-titan2e-m2-g3a50c30a53fd"
+      ],
+      "license_identifiers": [
+        "GPL-2.0-only"
+      ],
+      "origin_document": "devices/unihertz/titan2elite/README.md",
+      "origin_line": 30
+    },
+    {
+      "component": "MEDIATEK-MT6878-KERNEL-DEVICE-MODULES-TITAN2-ELITE",
+      "upstream": [
+        {
+          "name": "motorola-mt6878/kernel_device_modules",
+          "url": "https://github.com/motorola-mt6878/kernel_device_modules"
+        }
+      ],
+      "recorded_revisions": [
+        "6586afaa0622648a6e740fb4a83f4b8057346bc2"
+      ],
+      "recorded_versions": [],
+      "license_identifiers": [
+        "GPL-2.0-only",
+        "GPL-2.0-or-later"
+      ],
+      "origin_document": "devices/unihertz/titan2elite/README.md",
+      "origin_line": 30
+    },
+    {
+      "component": "MEDIATEK-MT6878-CONNECTIVITY-TITAN2-ELITE",
+      "upstream": [
+        {
+          "name": "motorola-mt6878/vendor_mediatek_kernel_modules",
+          "url": "https://github.com/motorola-mt6878/vendor_mediatek_kernel_modules"
+        }
+      ],
+      "recorded_revisions": [
+        "1c51f57c78be8acb3c51bc1911fffcd7b5c90184"
+      ],
+      "recorded_versions": [],
+      "license_identifiers": [
+        "GPL-2.0-only"
+      ],
+      "origin_document": "devices/unihertz/titan2elite/README.md",
+      "origin_line": 33
+    },
+    {
+      "component": "FEDORA-44-BUSYBOX-TITAN2-ELITE-INITRAMFS",
+      "upstream": [
+        {
+          "name": "Fedora busybox",
+          "url": "https://src.fedoraproject.org/rpms/busybox"
+        }
+      ],
+      "recorded_revisions": [],
+      "recorded_versions": [
+        "busybox-1.37.0-7.fc44"
+      ],
+      "license_identifiers": [
+        "GPL-2.0-only"
+      ],
+      "origin_document": "devices/unihertz/titan2elite/README.md",
+      "origin_line": 31
+    },
+    {
+      "component": "MESA-26-1-6-MALI-G615",
+      "upstream": [
+        {
+          "name": "Mesa 26.1.6",
+          "url": "https://archive.mesa3d.org/mesa-26.1.6.tar.xz"
+        }
+      ],
+      "recorded_revisions": [],
+      "recorded_versions": [
+        "26.1.6-1.luma.2"
+      ],
+      "license_identifiers": [
+        "MIT",
+        "BSD-3-Clause"
+      ],
+      "origin_document": "devices/unihertz/titan2elite/README.md",
+      "origin_line": 35
+    },
+    {
+      "component": "AOSP-MKBOOTIMG-AVBTOOL-TITAN2-ELITE",
+      "upstream": [
+        {
+          "name": "platform/system/tools/mkbootimg",
+          "url": "https://android.googlesource.com/platform/system/tools/mkbootimg"
+        },
+        {
+          "name": "platform/external/avb",
+          "url": "https://android.googlesource.com/platform/external/avb"
+        }
+      ],
+      "recorded_revisions": [
+        "d2bb0af5ba6d3198a3e99529c97eda1be0b5a093",
+        "761178607206f4cb2af79ed9eec52d8cbd814adb"
+      ],
+      "recorded_versions": [],
+      "license_identifiers": [
+        "Apache-2.0"
+      ],
+      "origin_document": "devices/unihertz/titan2elite/README.md",
+      "origin_line": 32
     }
   ],
   "spdx_license_ids_observed": [

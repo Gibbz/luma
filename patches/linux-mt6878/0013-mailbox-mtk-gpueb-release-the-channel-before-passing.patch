@@ -1,0 +1,34 @@
+From 898df3ac539ff126cc2818f7aa3d71983e27ad6a Mon Sep 17 00:00:00 2001
+From: Project Luma <builds@project-luma.local>
+Date: Mon, 19 Oct 2026 13:00:00 -0400
+Subject: [PATCH 13/17] mailbox: mtk-gpueb: release the channel before passing
+ on a reply
+
+The IRQ thread hands a received message to the client and only then
+clears rx_status. A client woken by the reply can send its next message
+before that, send_data() refuses it with -EBUSY, and the mailbox core
+never retries a refused message: the request is lost and the next send
+transmits a stale queue entry. Clear rx_status first.
+---
+ drivers/mailbox/mtk-gpueb-mailbox.c | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/mailbox/mtk-gpueb-mailbox.c b/drivers/mailbox/mtk-gpueb-mailbox.c
+index f6d2beccd..1b68c5f26 100644
+--- a/drivers/mailbox/mtk-gpueb-mailbox.c
++++ b/drivers/mailbox/mtk-gpueb-mailbox.c
+@@ -116,8 +116,13 @@ static irqreturn_t mtk_gpueb_mbox_thread(int irq, void *data)
+ 
+ 		mtk_gpueb_mbox_read_rx(buf, ch);
+ 		writel(BIT(ch->num), ch->ebm->mbox_ctl + GPUEB_MBOX_CTL_IRQ_CLR);
+-		mbox_chan_received_data(&ch->ebm->mbox.chans[ch->num], buf);
++		/*
++		 * Release the channel before passing the message on. A client
++		 * woken by it may send its next message right away, and the
++		 * mailbox core does not retry a message that send_data refused.
++		 */
+ 		atomic_set(&ch->rx_status, 0);
++		mbox_chan_received_data(&ch->ebm->mbox.chans[ch->num], buf);
+ 		return IRQ_HANDLED;
+ 	}
+ 

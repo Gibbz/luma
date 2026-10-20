@@ -38,7 +38,7 @@ grep -Fq 'FP6_AUDIO_AW88261_FIRMWARE_SHA256=af723973655ba5901948d4a22212323e39ce
 grep -Fq 'FP6_AUDIO_TOPOLOGY_SHA256=b799d001cf0da889f92215a6ef5143bda54021f5f76fa3e2e5d3797a169d7aa0' "$env_file"
 grep -Fq 'FP6_AUDIO_UCM_CARD_SHA256=e8ecc6febc5b5cc77012e8f9e00d8951674f0dee29a42ed9935e2a74b9020d75' "$env_file"
 grep -Fq 'FP6_AUDIO_UCM_HIFI_SHA256=b77077a3c89a5fcfaaab189d18b03682341d80158b57e81a57db52492af05534' "$env_file"
-grep -Fq 'FP6_AUDIO_WIREPLUMBER_SHA256=d6e2907d8e279931b57aeef5b55fe3126a0e959eba5cf5b2931e9aee00ad40be' "$env_file"
+grep -Fq 'FP6_AUDIO_WIREPLUMBER_SHA256=dde251246f594139077333292b978477efc6ba4be909a2b2b7ce9d52f7c4a1e0' "$env_file"
 grep -Fq 'FP6_AUDIO_ROUTE_HELPER_SHA256=bace0cb02010ccae596d7dc6786fd881458ffa15c77d07d91bcbdaf3a4cf937a' "$env_file"
 grep -Fq 'FP6_AUDIO_MICROPHONE_ROUTE_HELPER_SHA256=c56f672b2d37cdfd15a539553a0e32803426ccea1bfc4483668a7cceba73cdf1' "$env_file"
 grep -Fq 'FP6_AUDIO_TEST_TRACK_SHA256=4a99019ccadb2983706ef3ca5f419336ad30b6b544fd85e58de7a5c3b6a70b78' "$env_file"
@@ -48,7 +48,7 @@ test "$(sha256sum "$ucm_card" | awk '{print $1}')" = \
 test "$(sha256sum "$ucm_hifi" | awk '{print $1}')" = \
   b77077a3c89a5fcfaaab189d18b03682341d80158b57e81a57db52492af05534
 test "$(sha256sum "$wireplumber" | awk '{print $1}')" = \
-  d6e2907d8e279931b57aeef5b55fe3126a0e959eba5cf5b2931e9aee00ad40be
+  dde251246f594139077333292b978477efc6ba4be909a2b2b7ce9d52f7c4a1e0
 test "$(sha256sum "$route_helper" | awk '{print $1}')" = \
   bace0cb02010ccae596d7dc6786fd881458ffa15c77d07d91bcbdaf3a4cf937a
 test "$(sha256sum "$microphone_route_helper" | awk '{print $1}')" = \

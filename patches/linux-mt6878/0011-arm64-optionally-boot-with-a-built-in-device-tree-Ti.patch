@@ -1,0 +1,82 @@
+From bddeaeeb1356ea33366e6a8b759366b261dfd050 Mon Sep 17 00:00:00 2001
+From: Project Luma <builds@project-luma.local>
+Date: Mon, 19 Oct 2026 00:44:08 -0400
+Subject: [PATCH 11/12] arm64: optionally boot with a built-in device tree
+ (Titan 2 Elite)
+
+The vendor bootloader passes its own Android device tree. Link the
+mainline board tree into the kernel and use it instead.
+---
+ arch/arm64/Kconfig.debug        | 10 ++++++++++
+ arch/arm64/kernel/Makefile      |  2 ++
+ arch/arm64/kernel/setup.c       |  7 +++++++
+ arch/arm64/kernel/titan2e_dtb.S |  8 ++++++++
+ 4 files changed, 27 insertions(+)
+ create mode 100644 arch/arm64/kernel/titan2e_dtb.S
+
+diff --git a/arch/arm64/Kconfig.debug b/arch/arm64/Kconfig.debug
+index 265c44610..87afb88e5 100644
+--- a/arch/arm64/Kconfig.debug
++++ b/arch/arm64/Kconfig.debug
+@@ -16,6 +16,16 @@ config DEBUG_EFI
+ 	  the kernel that are only useful when using a debug build of the
+ 	  UEFI firmware
+ 
++config TITAN2E_BUILTIN_DTB
++	bool "Unihertz Titan 2 Elite: boot with a built-in device tree"
++	help
++	  Ignore the device tree passed by the vendor bootloader and use the
++	  mainline Titan 2 Elite tree linked into the kernel.
++
++config TITAN2E_BUILTIN_DTB_PATH
++	string "Path to the built-in device tree blob"
++	depends on TITAN2E_BUILTIN_DTB
++
+ config ARM64_RELOC_TEST
+ 	depends on m
+ 	tristate "Relocation testing module"
+diff --git a/arch/arm64/kernel/Makefile b/arch/arm64/kernel/Makefile
+index d2690c3ec..a3c4bf1f3 100644
+--- a/arch/arm64/kernel/Makefile
++++ b/arch/arm64/kernel/Makefile
+@@ -87,3 +87,5 @@ endif
+ 
+ # for cleaning
+ subdir- += vdso vdso32
++
++obj-$(CONFIG_TITAN2E_BUILTIN_DTB)	+= titan2e_dtb.o
+diff --git a/arch/arm64/kernel/setup.c b/arch/arm64/kernel/setup.c
+index 23c05dc7a..f7fb868d6 100644
+--- a/arch/arm64/kernel/setup.c
++++ b/arch/arm64/kernel/setup.c
+@@ -289,6 +289,13 @@ void __init __no_sanitize_address setup_arch(char **cmdline_p)
+ 	early_fixmap_init();
+ 	early_ioremap_init();
+ 
++#ifdef CONFIG_TITAN2E_BUILTIN_DTB
++	{
++		extern const char titan2e_dtb[];
++
++		__fdt_pointer = __pa_symbol(titan2e_dtb);
++	}
++#endif
+ 	setup_machine_fdt(__fdt_pointer);
+ 
+ 	/*
+diff --git a/arch/arm64/kernel/titan2e_dtb.S b/arch/arm64/kernel/titan2e_dtb.S
+new file mode 100644
+index 000000000..a819a4add
+--- /dev/null
++++ b/arch/arm64/kernel/titan2e_dtb.S
+@@ -0,0 +1,8 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++/* Built-in mainline device tree for Titan 2 Elite bring-up. */
++	.section .rodata, "a"
++	.balign	4096
++	.globl	titan2e_dtb
++titan2e_dtb:
++	.incbin	CONFIG_TITAN2E_BUILTIN_DTB_PATH
++	.balign	8
+-- 
+2.55.0
+

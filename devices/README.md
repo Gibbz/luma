@@ -8,3 +8,4 @@ the layout, support tiers and how to add a device.
 | Device | Directory | SoC | Tier |
 |---|---|---|---|
 | Fairphone 6 | [fairphone/fp6](fairphone/fp6) | Qualcomm SM7635 (milos) | supported |
+| Unihertz Titan 2 Elite | [unihertz/titan2elite](unihertz/titan2elite) | MediaTek MT6878 | experimental |

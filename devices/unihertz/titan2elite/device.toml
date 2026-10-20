@@ -1,0 +1,46 @@
+# SPDX-License-Identifier: Apache-2.0
+schema = 1
+vendor = "unihertz"
+codename = "titan2elite"
+name = "Unihertz Titan 2 Elite"
+marketing_name = "Unihertz Titan 2 Elite"
+form_factor = "phone"
+year = 2025
+soc = "mediatek/mt6878"
+tier = "experimental"
+maintainers = ["@nmcmil"]
+
+[kernel]
+# No kernel tag yet: MT6878-mainline/linux 12f2e9f0 plus patches/linux-mt6878
+# and the config, as pinned in the source file.
+source = "config/mobile/titan2e-kernel-source.json"
+release = "7.2.0-luma-titan2e-m2-g3a50c30a53fd"
+config = "config/mobile/titan2e-kernel.config"
+dtb = "mediatek/mt6878-unihertz-titan2-elite.dtb"
+
+[boot]
+config = "boot.toml"
+
+[firmware]
+manifest = "firmware.manifest"
+manifest_sha256 = "679a1aa34a39a882d5dade570d3a33f487f9eb8038a8466d6781d180ad996374"
+files = 10
+# Copied on first boot from the phone's own vendor partition by
+# luma-titan2e-connsys-fw. The phone's Wi-Fi calibration and Bluetooth address
+# (nvdata) are copied next to them and are never listed here.
+store = "/var/lib/titan2e-connsys/firmware"
+
+[install]
+guide = "INSTALL.md"
+method = "fastboot"
+# Partitions the install must never erase or write. nvram, nvdata, nvcfg,
+# protect1, protect2 and proinfo hold the phone's own radio calibration and
+# identity, including its IMEI. Luma writes only boot_a, and misc's boot-control
+# block (luma-titan2e-boot-ok).
+preserve = [
+  "nvram", "nvdata", "nvcfg", "protect1", "protect2", "proinfo",
+  "md_sec", "sec1", "seccfg", "otp", "frp", "modem_a", "modem_b",
+  "connsys_wifi_a", "connsys_wifi_b", "connsys_bt_a", "connsys_bt_b",
+  "connsys_gnss_a", "connsys_gnss_b", "dtbo_a", "dtbo_b", "vbmeta_a", "vbmeta_b",
+  "vendor_boot_a", "vendor_boot_b", "lk_a", "lk_b", "super", "gpt",
+]

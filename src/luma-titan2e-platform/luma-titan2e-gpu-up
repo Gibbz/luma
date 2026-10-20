@@ -1,0 +1,52 @@
+#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+# Load panthor for the Titan 2 Elite's Mali-G615 and fall back to CPU
+# compositing when the GPU path is not available.
+set -u
+FW=/var/lib/titan2e-connsys/firmware
+MALI=arm/mali/arch11.8/mali_csffw.bin
+OVERRIDE=/etc/luma/session.d/60-titan2e-renderer.env
+log() { echo "titan2e-gpu: $*" >/dev/kmsg; echo "$*"; }
+
+gpu_up() {
+	for i in $(seq 1 50); do [ -c /dev/dri/renderD128 ] && break; sleep 0.1; done
+	drv=$(readlink -f /sys/class/drm/renderD128/device/driver 2>/dev/null)
+	[ "${drv##*/}" = panthor ]
+}
+
+# Render on the CPU unless the GPU comes up.
+mkdir -p "${OVERRIDE%/*}"
+printf '%s\n' '# Written by luma-titan2e-gpu at boot: the GPU is not available.' \
+	WLR_RENDERER=pixman >"$OVERRIDE"
+
+# Fill the shared firmware directory (first boot) before adding to it.
+/usr/libexec/luma-titan2e-connsys-fw || :
+
+ok=no
+# linux-firmware's CSF firmware first. The firmware path is searched before
+# /usr/lib/firmware, so a vendor copy left there would shadow it.
+if ls /usr/lib/firmware/$MALI* >/dev/null 2>&1; then
+	rm -f "$FW/$MALI"
+	if modprobe panthor && gpu_up; then
+		ok=yes
+	else
+		log "panthor did not start with the linux-firmware CSF firmware"
+	fi
+fi
+# Fallback: the phone's own vendor copy.
+if [ $ok = no ] && /usr/libexec/luma-titan2e-connsys-fw --mali; then
+	printf %s "$FW" >/sys/module/firmware_class/parameters/path
+	if [ -d /sys/module/panthor ]; then
+		echo 13000000.gpu >/sys/bus/platform/drivers/panthor/bind 2>/dev/null
+	else
+		modprobe panthor
+	fi
+	gpu_up && ok=yes && log "using the vendor Mali firmware"
+fi
+[ $ok = yes ] || { log "no working Mali firmware; compositing on the CPU"; exit 0; }
+
+grep -qa 'Mali-G615' /usr/lib64/libgallium-*.so 2>/dev/null ||
+	{ log "Mesa lacks Mali-G615 support; compositing on the CPU"; exit 0; }
+
+rm -f "$OVERRIDE"
+log "compositing on the Mali-G615"

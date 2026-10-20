@@ -1,0 +1,10 @@
+[Unit]
+Description=Mark the Titan 2 Elite boot slot successful
+After=local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/luma-titan2e-boot-ok
+
+[Install]
+WantedBy=multi-user.target

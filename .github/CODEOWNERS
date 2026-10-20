@@ -10,6 +10,8 @@
 
 # SoC families
 /socs/qcom/milos/       @nmcmil
+/socs/mediatek/mt6878/  @nmcmil
 
 # Devices
 /devices/fairphone/fp6/ @nmcmil
+/devices/unihertz/titan2elite/ @nmcmil

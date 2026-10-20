@@ -1,0 +1,417 @@
+[
+  {
+    "path": ".github/CODEOWNERS",
+    "sha256": "3e56fa53dce555a6cc0a96f93d3c8572dc32ac362e7f3b7a1338796fe5e2b897",
+    "bytes": 518
+  },
+  {
+    "path": "PATCH-LICENSE-INHERITANCE.json",
+    "sha256": "9163ee1756b8875713488c7228a21f5e11b929a067a5320b309f10e4ff892ee6",
+    "bytes": 33678
+  },
+  {
+    "path": "THIRD-PARTY-SOURCES.md",
+    "sha256": "17a2e5b0bf47873d6cc0d778d858841b3ed41b8090179565dd0ecd3c9db930b7",
+    "bytes": 45672
+  },
+  {
+    "path": "config/mobile/fp6-audio.env",
+    "sha256": "eee6d5f45e2df1565378bbe04a6f306676fe6b7a37f789b2de62a25b8e2569eb",
+    "bytes": 2491
+  },
+  {
+    "path": "config/mobile/fp6-physical/overlay/etc/wireplumber/wireplumber.conf.d/51-luma-fp6-audio.conf",
+    "sha256": "dde251246f594139077333292b978477efc6ba4be909a2b2b7ce9d52f7c4a1e0",
+    "bytes": 1124
+  },
+  {
+    "path": "config/mobile/luma-greeter.env",
+    "sha256": "7f958a74170ff44fef8b354cf4e0da6d81bc2a4f597a89adb8c2dd04f8176c22",
+    "bytes": 158
+  },
+  {
+    "path": "config/mobile/mesa-source.env",
+    "sha256": "a7437b1a260aeb787b711b203d9d3f81a243702590008f63913b5f88036c2684",
+    "bytes": 1077
+  },
+  {
+    "path": "config/mobile/titan2e-initramfs/init",
+    "sha256": "ea297241da4c8704126494de8da45cf0d91d16ff960eabab4731fafc878658a5",
+    "bytes": 1185
+  },
+  {
+    "path": "config/mobile/titan2e-kernel-source.json",
+    "sha256": "e5d806162544504975280f459eb2afdbdb9e8bcf7dfac99f66a09c736ce7a85b",
+    "bytes": 2240
+  },
+  {
+    "path": "config/mobile/titan2e-kernel.config",
+    "sha256": "18b49a2bdaf755ea9af2dca0928eddb6d3071a8dfb811085ed0a8c55c4bbc057",
+    "bytes": 219626
+  },
+  {
+    "path": "devices/README.md",
+    "sha256": "5eb6f55cbbbb2f962c2df890b8697bd68f8b4bcf168ea28c1172fdfc007cc3df",
+    "bytes": 536
+  },
+  {
+    "path": "devices/device.schema.json",
+    "sha256": "c5f96690e176978083af19246a3be1e7d2fe58fba6f8e1eb9b94248a8ab13a10",
+    "bytes": 5125
+  },
+  {
+    "path": "devices/unihertz/titan2elite/INSTALL.md",
+    "sha256": "e30c27bb61e86367a6fb0bfba472029bfb2a0508c0f36a068512062f1b2e41e1",
+    "bytes": 6651
+  },
+  {
+    "path": "devices/unihertz/titan2elite/README.md",
+    "sha256": "88810c9476156fbc415e4f3071e92b3eb607dcbe2870536a85a54581221e2bec",
+    "bytes": 3620
+  },
+  {
+    "path": "devices/unihertz/titan2elite/boot.toml",
+    "sha256": "d5db9eddfe25bd905bb21112585451c79374dd9d0192cfa776db169a37373e87",
+    "bytes": 1164
+  },
+  {
+    "path": "devices/unihertz/titan2elite/device.toml",
+    "sha256": "384b43ff8d0a153fcc3a4678edc7fb99cabc6cb9c524e29ab51dea4929478085",
+    "bytes": 1705
+  },
+  {
+    "path": "devices/unihertz/titan2elite/firmware.manifest",
+    "sha256": "679a1aa34a39a882d5dade570d3a33f487f9eb8038a8466d6781d180ad996374",
+    "bytes": 951
+  },
+  {
+    "path": "devices/unihertz/titan2elite/source-pins.json",
+    "sha256": "79adccf8603b10a7446149898eec59542e0b6b463e9a120fc9d34aaa9c002282",
+    "bytes": 2283
+  },
+  {
+    "path": "devices/unihertz/titan2elite/tests/test_unihertz_titan2elite.py",
+    "sha256": "0d1fdc2ead82b443ac2ffc80a052c8066a2d2fe6aa9c27573dd6837331ea3a77",
+    "bytes": 6667
+  },
+  {
+    "path": "docs/devices.md",
+    "sha256": "3776781a44692f2327e2a63927ad52c6e3d7d79a99d91e11d8f18acd5bce644f",
+    "bytes": 8690
+  },
+  {
+    "path": "packaging/mesa/Mesa-MLAA-License-Clarification-Email.txt",
+    "sha256": "68e7be52203a4457ea97d9c4744661a07fc3d78edb44a86b43349fb66f09147a",
+    "bytes": 3682
+  },
+  {
+    "path": "packaging/rpm/luma-greeter.spec",
+    "sha256": "c91cffa03546967792135cfc755b9675acc457071a8c13494e741042c15d8bce",
+    "bytes": 7348
+  },
+  {
+    "path": "packaging/rpm/luma-titan2e-platform.spec",
+    "sha256": "3b01b1a9653f58488610e2c19b69fa0daf6bfb6692a25af81d48d76f31576df2",
+    "bytes": 6162
+  },
+  {
+    "path": "packaging/rpm/mesa.spec",
+    "sha256": "887063271d9aae1204ac2c2f2d19d8f211672f57aed2f8ec2d2a43d545773e34",
+    "bytes": 22843
+  },
+  {
+    "path": "packaging/rpm/titan2e-kernel-modules.spec",
+    "sha256": "ca4b7e31a105966ff485004828cbc61d2c01f92e79cf726e1e6527a38cddb7c1",
+    "bytes": 1036
+  },
+  {
+    "path": "packaging/titan2e-connsys/README.md",
+    "sha256": "55219b4e96f2151021f3c0b957806e23372945638dc98cf3765bbf699284afcc",
+    "bytes": 2941
+  },
+  {
+    "path": "packaging/titan2e-connsys/titan2e-connsys.patch",
+    "sha256": "2480c90780211a809541bb58b449075a177dfebb7c84bebeabdb0c8336a673b3",
+    "bytes": 81649
+  },
+  {
+    "path": "patches/linux-mt6878/0001-pinctrl-mediatek-mt6878-complete-the-EINT-map.patch",
+    "sha256": "c5b6a9a3114452476af0b9ce81ba8238b95f2b0921682e70f5a20189e9dcbfe5",
+    "bytes": 4841
+  },
+  {
+    "path": "patches/linux-mt6878/0002-clk-mediatek-mt6878-peri_ao-use-the-topckgen-clock-n.patch",
+    "sha256": "0bc075eb20835ef73fcdbadee38a87857f1c2b1c7ba27ee054da51728b967030",
+    "bytes": 4761
+  },
+  {
+    "path": "patches/linux-mt6878/0003-phy-mediatek-tphy-initialise-the-role-switch-work-be.patch",
+    "sha256": "354c02adba99fc89688619687dca2e633c65e63074e74a476eea0003ba8d744e",
+    "bytes": 1492
+  },
+  {
+    "path": "patches/linux-mt6878/0004-spmi-mtk-pmif-enable-the-AP-channel-on-MT6878.patch",
+    "sha256": "ec72d69ccf98aa42f98cc103081723b391d31826eade4a729cbc71749d800c42",
+    "bytes": 1968
+  },
+  {
+    "path": "patches/linux-mt6878/0005-regulator-add-the-MediaTek-MT6369-PMIC-VMCH-VMC-VTP.patch",
+    "sha256": "dfc5c238d0ff3981487bb7e1c024e501a76d6244cdba18bf7c1c91f5477fe5b8",
+    "bytes": 6151
+  },
+  {
+    "path": "patches/linux-mt6878/0006-drm-sysfb-simpledrm-connector-type-from-DT-and-CRTC-.patch",
+    "sha256": "c371d2474437e9238f04f12a74342f8b05d2641bad34f11e55d8be752c62104c",
+    "bytes": 5386
+  },
+  {
+    "path": "patches/linux-mt6878/0007-soc-mediatek-add-the-Titan-2-Elite-command-mode-pane.patch",
+    "sha256": "21ef72d5ac8c8aefa6ae7ede077c86e4c66d9ef6649ad5e5009ba08a432a0dd4",
+    "bytes": 15059
+  },
+  {
+    "path": "patches/linux-mt6878/0008-Input-add-the-Awinic-AW9523B-keypad-matrix.patch",
+    "sha256": "970e966118803832583282db2cc7355ef19a9b1ee1d428bfc639f4c8654d2f57",
+    "bytes": 13678
+  },
+  {
+    "path": "patches/linux-mt6878/0009-Input-add-the-FocalTech-SPI-touchscreen-FT3383.patch",
+    "sha256": "ec28c942ca3dff9b892d1dba70cae85c18c007c40c9e71e2164227109d7c10e5",
+    "bytes": 10042
+  },
+  {
+    "path": "patches/linux-mt6878/0010-Input-add-MediaTek-MT6363-PMIC-keys.patch",
+    "sha256": "d04da0145fb2a0cdc2fa6428fa45c3ef85f61138f6c2211ad2c768665448c0d4",
+    "bytes": 6472
+  },
+  {
+    "path": "patches/linux-mt6878/0011-arm64-optionally-boot-with-a-built-in-device-tree-Ti.patch",
+    "sha256": "a6c38d4b769292f877299132e49d26df07be232fdb4de72c0066e44c6db42b92",
+    "bytes": 2561
+  },
+  {
+    "path": "patches/linux-mt6878/0012-arm64-dts-mediatek-add-the-Unihertz-Titan-2-Elite.patch",
+    "sha256": "f889384d6314af0ad7370c9ef52f603eb2696979e8a9b35aeecb8482c90a7150",
+    "bytes": 18221
+  },
+  {
+    "path": "patches/linux-mt6878/0013-mailbox-mtk-gpueb-release-the-channel-before-passing.patch",
+    "sha256": "794d2718b9541dfb419ca2c9cb40d86517fbc8e3e4c5642b76a3b5e2b26b5586",
+    "bytes": 1481
+  },
+  {
+    "path": "patches/linux-mt6878/0014-mailbox-mtk-gpueb-add-MT6878.patch",
+    "sha256": "d3fe9253c8f936e07e957e61a80901ec5c3a51b7e293c318aad25ea5c954e873",
+    "bytes": 2300
+  },
+  {
+    "path": "patches/linux-mt6878/0015-pmdomain-mediatek-mfg-match-each-GPUFreq-reply-to-it.patch",
+    "sha256": "92021bca4c2c2ec165d570964ce3b95123f7b4f99ebccfd870308d638f158a15",
+    "bytes": 1970
+  },
+  {
+    "path": "patches/linux-mt6878/0016-pmdomain-mediatek-mfg-add-MT6878.patch",
+    "sha256": "8dd7240ce54b09f6d406a2c7d3ad90e32ede4b59dd5a395f369d82e908a5b482",
+    "bytes": 7200
+  },
+  {
+    "path": "patches/linux-mt6878/0017-arm64-dts-mediatek-mt6878-titan2-elite-add-CONNSYS.patch",
+    "sha256": "7df9c9cff0d1b613980e3730db4e44ec01e4619070ad55c4c7b8f43dbf86ad96",
+    "bytes": 5600
+  },
+  {
+    "path": "patches/linux-mt6878/0018-arm64-dts-mediatek-mt6878-titan2-elite-leave-I2S4-clock-pins.patch",
+    "sha256": "e2034b59e8b51bf7d730ec52ee929191b7b6bb4282e3348413d137bed30054a7",
+    "bytes": 1022
+  },
+  {
+    "path": "patches/linux-mt6878/0019-ASoC-mediatek-add-the-MT6878-AFE.patch",
+    "sha256": "d51d333dc145dd60986eb96fe0afb9878c2fca1ecfa7056ea8145269b02aa7b2",
+    "bytes": 2320587
+  },
+  {
+    "path": "patches/linux-mt6878/0020-ASoC-codecs-add-the-MediaTek-MT6369-codec.patch",
+    "sha256": "04aa82a40a91196ada38606344e3be0dfb1db4f7f0efd48bd72340f30df5283a",
+    "bytes": 547270
+  },
+  {
+    "path": "patches/linux-mt6878/0021-ASoC-codecs-add-FourSemi-FS18xx-FS19xx-amplifiers.patch",
+    "sha256": "966cfaa642ed3f715446002fd9ef7a0e5bb2b16d0b948cd50dd0bd60df611a2a",
+    "bytes": 190591
+  },
+  {
+    "path": "patches/linux-mt6878/0022-ASoC-mediatek-mt6878-add-the-Titan-2-Elite-sound-car.patch",
+    "sha256": "330df7a847591aa1f4229a1bc868585f357b9a972a566fb1e0bc9062693e0a77",
+    "bytes": 13410
+  },
+  {
+    "path": "patches/linux-mt6878/0023-arm64-dts-mediatek-mt6878-titan2-elite-add-audio.patch",
+    "sha256": "0000806edae3c07698ded5a77c006d8095b5cdcd6d68a4299ae58cfdeaf40740",
+    "bytes": 4327
+  },
+  {
+    "path": "patches/linux-mt6878/README.md",
+    "sha256": "c842647970679a5ed247a9fce17f6261ff67988f1fbcfe052439b27cde6304c5",
+    "bytes": 1814
+  },
+  {
+    "path": "patches/mesa/0001-gallivm-propagate-aarch64-host-features.patch",
+    "sha256": "f95b823ed1470e1f17392fffd780c82d2d37765c4ea5301890491e73b5032988",
+    "bytes": 1325
+  },
+  {
+    "path": "patches/mesa/0002-panfrost-backport-v11-support-for-mali-g615.patch",
+    "sha256": "85d46b565d610b8101b3e7e9ebc22008ea4a12b9fcd47bd2b8c965452739d5bf",
+    "bytes": 129827
+  },
+  {
+    "path": "scripts/mobile/luma-phosh-session",
+    "sha256": "d19324bfa5ebf8fa889fd95b6cb0bedecf25ecbe6cdee046d021521b855352a6",
+    "bytes": 969
+  },
+  {
+    "path": "scripts/packages/build-luma-titan2e-platform.sh",
+    "sha256": "dbe0f010653973183a744427db132cc7ce91dc7630dc10c7f2dbb07f833cbe97",
+    "bytes": 1128
+  },
+  {
+    "path": "scripts/packages/build-mesa.sh",
+    "sha256": "8cdb1b984d88bf24e891c5413c6982c80d40d35eb4d9763ce17843e9af68b7f6",
+    "bytes": 2149
+  },
+  {
+    "path": "scripts/packages/build-titan2e-connsys-modules.sh",
+    "sha256": "bfdb6a6e8e872136f689c6bf2ffe7bea5ed5ed74010bd064bdab125d8df6dab0",
+    "bytes": 3581
+  },
+  {
+    "path": "scripts/packages/build-titan2e-kernel.sh",
+    "sha256": "73efa8cae72108d3ad4a9c0d14bf5cf1151f6ada78d70ef734e7798749e23ff8",
+    "bytes": 6687
+  },
+  {
+    "path": "socs/mediatek/mt6878/soc.toml",
+    "sha256": "135d94fa666cde1a7f70efa21bd5081d938f35c0196d8729f205d01090fe4f09",
+    "bytes": 825
+  },
+  {
+    "path": "src/luma-greeter/luma-presence-compositor.c",
+    "sha256": "c1f0904be6e6eb59788f9c31dbb6be604b50ec2b9f23c938ec651e18c7449914",
+    "bytes": 1020
+  },
+  {
+    "path": "src/luma-titan2e-platform/50-titan2e-watchdog.conf",
+    "sha256": "a267e75fb19844901d0ba1b369c15a43288b600daa32e2052db5d4ee1abfa92a",
+    "bytes": 152
+  },
+  {
+    "path": "src/luma-titan2e-platform/50-titan2e.env",
+    "sha256": "96a305198cb5701aa168c6f914c9dc5e44228702f97989c5c83d1b5076ea85a2",
+    "bytes": 258
+  },
+  {
+    "path": "src/luma-titan2e-platform/52-luma-titan2e-audio.conf",
+    "sha256": "2117bdd48c8ffd6322a4eaca29a1402231054b84402760bb55402e264cdb5a9d",
+    "bytes": 588
+  },
+  {
+    "path": "src/luma-titan2e-platform/60-luma-titan2e-platform.preset",
+    "sha256": "e3a3fb8c328a35894bea7f86d5bf40256daaf83d19772eaf9c2bfd41dfae713f",
+    "bytes": 138
+  },
+  {
+    "path": "src/luma-titan2e-platform/luma-titan2e-audio-up",
+    "sha256": "e7fc1a5e3018a68e5bab80e53fc390f4d078cea797e5b3a3bb88cdd708c09fe4",
+    "bytes": 561
+  },
+  {
+    "path": "src/luma-titan2e-platform/luma-titan2e-audio.service",
+    "sha256": "c73b2bc23f831641f78f57f5aa8a8b1cd6fc44f6bed730da17bef8c5c0fadc00",
+    "bytes": 236
+  },
+  {
+    "path": "src/luma-titan2e-platform/luma-titan2e-boot-android",
+    "sha256": "a923adea26ff3f107c4969ba0515b6a054666f629da7e5fb2c93c28a01a6b2c7",
+    "bytes": 2715
+  },
+  {
+    "path": "src/luma-titan2e-platform/luma-titan2e-boot-ok",
+    "sha256": "d6a7d0570989f6ed701467c9ad53aeb88a834abd4690e16cd827f293c0d96137",
+    "bytes": 1428
+  },
+  {
+    "path": "src/luma-titan2e-platform/luma-titan2e-boot-ok.service",
+    "sha256": "c67bb7fc46d83f2b41ac3426c22f7bbd053d2a4b03df16b53c5a23c93dc7e00a",
+    "bytes": 191
+  },
+  {
+    "path": "src/luma-titan2e-platform/luma-titan2e-connsys-fw",
+    "sha256": "a54d1604a7ab3c6d70ad9a0147bd002a3afb233d33a03142db3df3d3e184c046",
+    "bytes": 5937
+  },
+  {
+    "path": "src/luma-titan2e-platform/luma-titan2e-connsys-up",
+    "sha256": "644f31ec2f2b4407ebf7da94f7b065763514513be185c5d162cf3468fead0aaa",
+    "bytes": 2679
+  },
+  {
+    "path": "src/luma-titan2e-platform/luma-titan2e-connsys.service",
+    "sha256": "552378e1da8d77b1ef928315b8d583fc3a4a29dcd847dbd0375f7420a75acbf6",
+    "bytes": 294
+  },
+  {
+    "path": "src/luma-titan2e-platform/luma-titan2e-gpu-up",
+    "sha256": "86307c51d8148a42f548af5220065623d983fa3fd095063c86791e8bbc0dca9a",
+    "bytes": 1848
+  },
+  {
+    "path": "src/luma-titan2e-platform/luma-titan2e-gpu.service",
+    "sha256": "6ab7a0c76bdc546da1e405c794fd45d562bb16bc31b59332310a99da7ba08003",
+    "bytes": 300
+  },
+  {
+    "path": "src/luma-titan2e-platform/luma-titan2e-panthor.conf",
+    "sha256": "8cb9af19e01378937416b06bae6012ed1ad30ff3f03ef3b847e1edb1a6f23a0c",
+    "bytes": 88
+  },
+  {
+    "path": "src/luma-titan2e-platform/luma-titan2e-phoc-config",
+    "sha256": "a83eef189480f8fe1f6ac8465ec11d6fb3ad2d4274113856f7600e2011a97717",
+    "bytes": 739
+  },
+  {
+    "path": "src/luma-titan2e-platform/phoc-titan2e.ini",
+    "sha256": "98a622078dc0c2cbfe42203d69e20868657a68d183da0d572a4d76a4d083e3d2",
+    "bytes": 89
+  },
+  {
+    "path": "src/luma-titan2e-platform/ucm2-Titan2Elite-HiFi.conf",
+    "sha256": "b3df31e30c8fd1e245da14a555e4ee98ed91f460cc67ed9377e3adf53af0f176",
+    "bytes": 1602
+  },
+  {
+    "path": "src/luma-titan2e-platform/ucm2-Titan2Elite.conf",
+    "sha256": "72f880598f6c083eb1fd136b1efdac5d3912f76ca8c94a0f68f8e479edc0cdd3",
+    "bytes": 102
+  },
+  {
+    "path": "tests/smoke/mobile-fp6-audio.sh",
+    "sha256": "867a99ac6be4b9d9deb628f8a6f83459e43a0092b3074266eb1aa92004f54c6f",
+    "bytes": 6944
+  },
+  {
+    "path": "tests/unit/test_device_tree.py",
+    "sha256": "2ed7804e29900fbd53300d16e8df6eb43e7bd7a29cc19492e1999440d8defd2a",
+    "bytes": 7313
+  },
+  {
+    "path": "third-party-source-register.json",
+    "sha256": "97560e58aa2186d09f1507167d5cad53b7339ec0a85500b444569051a38084b0",
+    "bytes": 391035
+  },
+  {
+    "path": "tools/check-devices.py",
+    "sha256": "8078c93f62959538155b5eec3a36c1a786cd6a47bfc6d011497a3374ddf74792",
+    "bytes": 19890
+  }
+]

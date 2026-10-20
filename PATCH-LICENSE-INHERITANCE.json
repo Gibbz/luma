@@ -451,6 +451,21 @@
       "note": ""
     },
     {
+      "family": "linux-mt6878",
+      "path": "patches/linux-mt6878/",
+      "status": "documented",
+      "observed_patch_headers": {},
+      "documented_component_licenses": [
+        "GPL-2.0-only",
+        "GPL-2.0-or-later"
+      ],
+      "evidence": {
+        "document": "patches/linux-mt6878/README.md",
+        "line": 21
+      },
+      "note": "Linux kernel patches; new files carry GPL-2.0 or (GPL-2.0 OR MIT) headers, and files ported from MediaTek's and FourSemi's GPL drivers keep their notices."
+    },
+    {
       "family": "linux-qcomtee-control-v18",
       "path": "patches/linux-qcomtee-control-v18/",
       "status": "upstream-license-not-established-by-this-audit",
@@ -557,6 +572,20 @@
         "field": "License"
       },
       "note": "Aggregate package expression, not a substitute for each modified file's upstream notice."
+    },
+    {
+      "family": "mesa",
+      "path": "patches/mesa/",
+      "status": "documented",
+      "observed_patch_headers": {},
+      "documented_component_licenses": [
+        "MIT"
+      ],
+      "evidence": {
+        "document": "packaging/rpm/mesa.spec",
+        "line": 95
+      },
+      "note": "Mesa patches inherit Mesa's MIT terms."
     },
     {
       "family": "modemmanager-fp6",

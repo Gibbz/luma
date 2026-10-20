@@ -3,7 +3,8 @@
 """Validate every device under devices/ and every SoC family under socs/.
 
 A device directory holds exactly: device.toml, boot.toml, firmware.manifest,
-INSTALL.md and tests/. Manifests are checked against their JSON Schemas, the
+INSTALL.md and tests/, and may add README.md, source-pins.json and
+public-file-manifest.json. Manifests are checked against their JSON Schemas, the
 firmware manifest and initramfs sources against the hashes device.toml records, and the whole tree
 against the rules that keep it public: text only, no firmware blobs, no IMEI
 or ICCID values, and an owner in .github/CODEOWNERS for every directory.
@@ -29,6 +30,7 @@ except ImportError:  # pragma: no cover - reported as exit 2
     jsonschema = None
 
 DEVICE_FILES = {"device.toml", "boot.toml", "firmware.manifest", "INSTALL.md", "tests"}
+OPTIONAL_DEVICE_FILES = {"README.md", "source-pins.json", "public-file-manifest.json"}
 SOC_FILES = {"soc.toml"}
 SCHEMA_FILES = {"device.schema.json", "boot.schema.json", "soc.schema.json"}
 MAX_FILE_BYTES = 512 * 1024
@@ -217,6 +219,24 @@ class Checker:
         if files != firmware.get("files"):
             self.error(path, f"{files} files listed but device.toml says {firmware.get('files')}")
 
+    def check_kernel_source(self, device_dir: Path, kernel: dict) -> None:
+        """A kernel pinned by a source file instead of a tag must name the same release."""
+        source = kernel.get("source")
+        if not source:
+            return
+        where = device_dir / "device.toml"
+        path = self.root / source
+        if not path.is_file():
+            self.error(where, f"kernel.source {source!r} does not exist")
+            return
+        try:
+            pins = json.loads(path.read_text())
+        except (OSError, ValueError) as exc:
+            self.error(where, f"kernel.source {source!r} cannot be read: {exc}")
+            return
+        if pins.get("release") != kernel.get("release"):
+            self.error(where, f"kernel.release does not match {source}")
+
     def check_initramfs(self, device_dir: Path, initramfs: dict | None) -> None:
         """Repository files the boot image's initramfs is built from must exist as recorded."""
         if not initramfs:
@@ -293,10 +313,11 @@ class Checker:
             for device_dir in sorted(p for p in vendor.iterdir() if p.is_dir()):
                 if device_dir.name == "__pycache__":
                     continue
-                entries = {p.name for p in device_dir.iterdir()}
+                entries = {p.name for p in device_dir.iterdir()} - OPTIONAL_DEVICE_FILES
                 if entries != DEVICE_FILES:
                     missing, extra = DEVICE_FILES - entries, entries - DEVICE_FILES
                     self.error(device_dir, f"must hold exactly {sorted(DEVICE_FILES)}"
+                               + f" (optionally {sorted(OPTIONAL_DEVICE_FILES)})"
                                + (f"; missing {sorted(missing)}" if missing else "")
                                + (f"; unexpected {sorted(extra)}" if extra else ""))
                     if not {"device.toml", "boot.toml"} <= entries:
@@ -322,6 +343,7 @@ class Checker:
                 release = device.get("kernel", {}).get("release", "")
                 if tag and release and not tag.endswith("-" + release):
                     self.error(device_dir / "device.toml", "kernel.tag must end with the kernel release")
+                self.check_kernel_source(device_dir, device.get("kernel", {}))
                 self.check_initramfs(device_dir, device.get("initramfs"))
                 if (device_dir / "firmware.manifest").is_file():
                     self.check_firmware_manifest(device_dir, device.get("firmware", {}))

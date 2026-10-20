@@ -1,0 +1,24 @@
+#!/bin/busybox sh
+# SPDX-License-Identifier: Apache-2.0
+# Unihertz Titan 2 Elite initramfs, built into the kernel: mount the Luma root
+# from partition 1 of the microSD card and start systemd in its OSTree
+# deployment. On failure the phone restarts after 30 s; the bootloader then
+# counts a failed boot of slot a and eventually falls back to the other slot.
+/bin/busybox --install -s /bin
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t devtmpfs devtmpfs /dev
+log() { echo "luma-initramfs: $*" >/dev/kmsg; }
+fail() { log "$*; restarting in 30 s"; sleep 30; reboot -f; }
+
+i=0
+while [ ! -b /dev/mmcblk0p1 ] && [ $i -lt 60 ]; do sleep 1; i=$((i + 1)); done
+[ -b /dev/mmcblk0p1 ] || fail "no microSD root (mmcblk0p1)"
+mount /dev/mmcblk0p1 /sysroot || fail "cannot mount the microSD root"
+D=$(ls -d /sysroot/ostree/deploy/luma/deploy/*.0 2>/dev/null | head -1)
+[ -n "$D" ] || fail "no OSTree deployment on the microSD root"
+mount --bind "$D" /newroot &&
+	mount --bind /sysroot/ostree/deploy/luma/var /newroot/var &&
+	mount --bind /sysroot /newroot/sysroot || fail "cannot assemble the deployment"
+log "starting Luma from $D"
+exec switch_root /newroot /usr/lib/systemd/systemd

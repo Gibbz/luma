@@ -1,0 +1,13 @@
+[Unit]
+Description=Titan 2 Elite Wi-Fi and Bluetooth
+After=systemd-udevd.service local-fs.target
+Before=NetworkManager.service bluetooth.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/luma-titan2e-connsys-up
+TimeoutStartSec=120
+
+[Install]
+WantedBy=multi-user.target

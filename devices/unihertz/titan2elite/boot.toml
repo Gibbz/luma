@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: Apache-2.0
+# Boot policy for the Unihertz Titan 2 Elite. Format and page size come from
+# socs/mediatek/mt6878/soc.toml. Luma uses slot a only; Android stays on slot b.
+# The kernel ignores the device tree the bootloader passes and boots with its
+# built-in one and its built-in initramfs, which starts Luma from the microSD card.
+schema = 1
+partition = "boot_a"
+partition_size = 67108864
+
+[cmdline]
+# The boot image's own command line is empty; these come from /chosen in the
+# built-in device tree, in this order.
+args = [
+  "clk_ignore_unused",
+  "pd_ignore_unused",
+  "rdinit=/init",
+  "loglevel=8",
+  "panic=5",
+  "softlockup_panic=1",
+]
+generated = []
+forbidden = ["selinux=0", "lsm="]
+
+[avb]
+# vbmeta chains boot, so the image needs an AVB hash footer. It is signed with
+# the AOSP test key, which an unlocked bootloader accepts. vbmeta stays stock.
+footer = "hash"
+algorithm = "SHA256_RSA2048"
+hash_algorithm = "sha256"
+vbmeta = "untouched"
+
+[dtbo]
+# The bootloader checks the signature of dtbo and stops if it is not
+# Unihertz's, so dtbo_a stays as shipped. The kernel does not use it.
+policy = "stock"
+partitions = ["dtbo_a"]

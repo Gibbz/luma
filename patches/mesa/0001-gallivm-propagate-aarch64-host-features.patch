@@ -1,0 +1,34 @@
+From: Luma contributors
+Subject: [PATCH] gallivm: propagate detected host features on AArch64
+
+LLVM reports negative optional host features such as -sve on AArch64.
+Pass those detected features to Gallivm as already done for 32-bit Arm,
+so selecting the host CPU does not re-enable instructions unavailable to
+the running kernel. Keep CPU selection and all feature detection intact.
+
+Use the iterator returned by features.begin() so the same loop remains
+compatible with LLVM 22, which no longer exposes StringMapIterator.
+
+Upstream-Status: Pending
+Source: Mesa 26.1.6, MIT-licensed Gallivm source
+
+--- a/src/gallium/auxiliary/gallivm/lp_bld_misc.cpp
++++ b/src/gallium/auxiliary/gallivm/lp_bld_misc.cpp
+@@ -317,7 +317,7 @@
+ lp_build_fill_mattrs(std::vector<std::string> &MAttrs)
+ {
+ 
+-#if DETECT_ARCH_ARM
++#if DETECT_ARCH_ARM || DETECT_ARCH_AARCH64
+    /* llvm-3.3+ implements sys::getHostCPUFeatures for Arm,
+     * which allows us to enable/disable code generation based
+     * on the results of cpuid on these architectures.
+@@ -331,7 +331,7 @@
+       llvm::sys::getHostCPUFeatures(features);
+    #endif
+ 
+-   for (llvm::StringMapIterator<bool> f = features.begin();
++   for (auto f = features.begin();
+         f != features.end();
+         ++f) {
+       MAttrs.push_back(((*f).second ? "+" : "-") + (*f).first().str());

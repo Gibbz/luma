@@ -1,0 +1,13 @@
+#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+# Titan 2 Elite audio: the speaker amplifier's firmware comes from the phone's
+# own vendor partition (copied once, on first boot) and is loaded on first use.
+set -u
+FW=/var/lib/titan2e-connsys/firmware
+log() { echo "titan2e-audio: $*" >/dev/kmsg; echo "$*"; }
+
+/usr/libexec/luma-titan2e-connsys-fw --audio ||
+	log "speaker stays silent: amplifier firmware not found in the vendor partition"
+[ -w /sys/module/firmware_class/parameters/path ] &&
+	printf %s "$FW" >/sys/module/firmware_class/parameters/path
+exit 0

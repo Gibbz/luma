@@ -1,0 +1,13 @@
+[Unit]
+Description=Titan 2 Elite GPU
+After=systemd-udevd.service local-fs.target
+Before=display-manager.service greetd.service luma-titan2e-connsys.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/luma-titan2e-gpu-up
+TimeoutStartSec=60
+
+[Install]
+WantedBy=multi-user.target

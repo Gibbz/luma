@@ -1,0 +1,159 @@
+#!/usr/bin/python3
+# SPDX-License-Identifier: Apache-2.0
+"""Copy the Wi-Fi/Bluetooth firmware and calibration data from the phone's own
+Android partitions (vendor in super, nvdata) into /var/lib/titan2e-connsys/firmware.
+With --mali, copy only the vendor Mali CSF firmware there instead (the fallback
+when linux-firmware's is missing); with --audio, only the speaker amplifier's
+FourSemi firmware. Everything is mounted read-only through
+read-only loop devices."""
+import os, shutil, struct, subprocess, sys, tempfile
+
+DEST = '/var/lib/titan2e-connsys/firmware'
+BYNAME = '/dev/disk/by-partlabel'
+VENDOR_FILES = ['soc7_0_ram_bt_1_1_hdr.bin', 'soc7_0_ram_bt_1a_1_hdr.bin',
+                'soc7_0_ram_bt_1b_1_hdr.bin', 'soc7_0_ram_mcu_1_1_hdr.bin',
+                'soc7_0_ram_mcu_1a_1_hdr.bin', 'soc7_0_ram_mcu_1b_1_hdr.bin',
+                'wifi.cfg', 'conninfra.cfg', 'BT_FW.cfg']
+NVDATA_FILES = {'APCFG/APRDEB/WIFI': 'WIFI', 'APCFG/APRDEB/BT_Addr': 'BT_Addr'}
+# panthor looks the CSF firmware up by GPU architecture (Mali-G615 = 11.8).
+MALI_FW = 'arm/mali/arch11.8/mali_csffw.bin'
+# FourSemi speaker amplifier tables (register, DSP model and effect), per board.
+AUDIO_FW = 'frsm-spk1.bin'
+
+
+def log(msg):
+    print('titan2e-connsys-fw: ' + msg, file=sys.stderr)
+
+
+def lp_extents(super_dev, name):
+    """Linear extents (offset, size in bytes) of a logical partition in super."""
+    with open(super_dev, 'rb') as f:
+        f.seek(4096)
+        if struct.unpack_from('<I', f.read(4096))[0] != 0x616c4467:
+            raise RuntimeError('no LP geometry in ' + super_dev)
+        f.seek(3 * 4096)
+        h = f.read(4096)
+        if struct.unpack_from('<I', h)[0] != 0x414C5030:
+            raise RuntimeError('no LP metadata in ' + super_dev)
+        hsize = struct.unpack_from('<I', h, 8)[0]
+        tsize = struct.unpack_from('<I', h, 44)[0]
+        desc = [struct.unpack_from('<III', h, 80 + 12 * i) for i in range(2)]
+        f.seek(3 * 4096 + hsize)
+        t = f.read(tsize)
+    (po, pn, ps), (eo, en, es) = desc
+    for i in range(pn):
+        b = po + i * ps
+        if t[b:b + 36].split(b'\0')[0].decode() != name:
+            continue
+        first, num = struct.unpack_from('<II', t, b + 40)
+        out = []
+        for e in range(first, first + num):
+            sectors, ttype, data, _ = struct.unpack_from('<QIQI', t, eo + e * es)
+            if ttype != 0:
+                raise RuntimeError('non-linear extent in ' + name)
+            out.append((data * 512, sectors * 512))
+        return out
+    return []
+
+
+def mount_ro(dev, fstypes, offset=0, size=0):
+    args = ['losetup', '-r', '-f', '--show']
+    if offset:
+        args += ['-o', str(offset), '--sizelimit', str(size)]
+    loop = subprocess.check_output(args + [dev], text=True).strip()
+    mnt = tempfile.mkdtemp(prefix='titan2e-connsys.')
+    for fs in fstypes:
+        opts = 'ro,nodev,nosuid,noexec' + (',noload' if fs == 'ext4' else '')
+        if subprocess.call(['mount', '-t', fs, '-o', opts, loop, mnt],
+                           stderr=subprocess.DEVNULL) == 0:
+            return loop, mnt
+    subprocess.call(['losetup', '-d', loop])
+    os.rmdir(mnt)
+    raise RuntimeError('cannot mount ' + dev)
+
+
+def umount(loop, mnt):
+    subprocess.call(['umount', mnt])
+    subprocess.call(['losetup', '-d', loop])
+    os.rmdir(mnt)
+
+
+def copy(src_dir, files, tmp):
+    for src, dst in files:
+        p = os.path.join(src_dir, src)
+        if not os.path.isfile(p):
+            raise RuntimeError('missing ' + src)
+        shutil.copyfile(p, os.path.join(tmp, dst))
+
+
+def vendor_mount():
+    super_dev = os.path.join(BYNAME, 'super')
+    ext = []
+    for name in ('vendor_a', 'vendor_b'):
+        ext = lp_extents(super_dev, name)
+        if ext:
+            break
+    if len(ext) != 1:
+        raise RuntimeError('vendor partition not found as one extent in super')
+    return mount_ro(super_dev, ('erofs', 'ext4'), *ext[0])
+
+
+def copy_one(src, rel, what):
+    """Copy firmware/<src> from the vendor partition to DEST/<rel>, once."""
+    dst = os.path.join(DEST, rel)
+    if os.path.isfile(dst):
+        return 0
+    try:
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        loop, mnt = vendor_mount()
+        try:
+            shutil.copyfile(os.path.join(mnt, 'firmware', src), dst + '.tmp')
+        finally:
+            umount(loop, mnt)
+        os.rename(dst + '.tmp', dst)
+        log('copied the vendor %s firmware to %s' % (what, dst))
+        return 0
+    except (OSError, RuntimeError, subprocess.CalledProcessError) as e:
+        log('vendor %s firmware unavailable: %s' % (what, e))
+        return 1
+
+
+def copy_mali():
+    return copy_one('mali_csffw.bin', MALI_FW, 'Mali')
+
+
+def main():
+    if sys.argv[1:] == ['--mali']:
+        return copy_mali()
+    if sys.argv[1:] == ['--audio']:
+        return copy_one(AUDIO_FW, AUDIO_FW, 'speaker amplifier')
+    want = VENDOR_FILES + list(NVDATA_FILES.values())
+    if all(os.path.isfile(os.path.join(DEST, f)) for f in want):
+        return 0
+    os.makedirs(os.path.dirname(DEST), exist_ok=True)
+    tmp = tempfile.mkdtemp(prefix='firmware.', dir=os.path.dirname(DEST))
+    try:
+        loop, mnt = vendor_mount()
+        try:
+            copy(os.path.join(mnt, 'firmware'), [(f, f) for f in VENDOR_FILES], tmp)
+        finally:
+            umount(loop, mnt)
+        loop, mnt = mount_ro(os.path.join(BYNAME, 'nvdata'), ('ext4',))
+        try:
+            copy(mnt, NVDATA_FILES.items(), tmp)
+        finally:
+            umount(loop, mnt)
+        os.chmod(tmp, 0o755)
+        if os.path.isdir(DEST):
+            shutil.rmtree(DEST)
+        os.rename(tmp, DEST)
+        log('copied firmware and calibration data to ' + DEST)
+        return 0
+    except (OSError, RuntimeError, subprocess.CalledProcessError) as e:
+        shutil.rmtree(tmp, ignore_errors=True)
+        log('Wi-Fi/Bluetooth firmware unavailable: %s' % e)
+        return 1
+
+
+if __name__ == '__main__':
+    sys.exit(main())

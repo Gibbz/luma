@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: Apache-2.0
+# Shared configuration for every device on the MediaTek MT6878 family. A device
+# on this SoC sets `soc = "mediatek/mt6878"` and only declares what differs.
+schema = 1
+vendor = "mediatek"
+family = "mt6878"
+name = "MediaTek MT6878"
+arch = "aarch64"
+part_numbers = ["MT6878"]
+
+[kernel]
+repository = "https://github.com/SimplyLuma/linux"
+branch = "mt6878"
+upstream = "https://github.com/MT6878-mainline/linux"
+dts_directory = "arch/arm64/boot/dts/mediatek"
+
+[boot]
+# MediaTek LK defaults for this family. The kernel and device tree are in an
+# Android v4 boot image; the v4 header carries no DTB.
+format = "android-boot-v4"
+page_size = 4096
+slots = "ab"
+dtb_in_boot_image = false
+
+[firmware]
+# Device firmware lives under this path on the phone, never in git.
+directory = "mediatek/mt6878"

@@ -1,0 +1,59 @@
+#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+# Load the MediaTek CONNSYS Wi-Fi/Bluetooth drivers on the Titan 2 Elite and power Wi-Fi on.
+set -u
+FW=/var/lib/titan2e-connsys/firmware
+MOD=/usr/lib/modules/$(uname -r)/extra/titan2e-connsys
+[ -e "$MOD/conninfra.ko" ] || MOD=/var/lib/titan2e-connsys/modules
+C=/proc/device-tree/consys@18000000
+P=/proc/device-tree/reserved-memory/titan-shared-dma-pool-wifi-reserve-memory-dma@88b00000
+log() { echo "titan2e-connsys: $*" >/dev/kmsg; echo "$*"; }
+
+[ -e "$MOD/conninfra.ko" ] || { log "no Wi-Fi/Bluetooth modules for $(uname -r)"; exit 0; }
+
+# BT RAM code, Wi-Fi config and the per-device NVRAM come from the phone's own
+# partitions (vendor, nvdata); copied once, on first boot.
+/usr/libexec/luma-titan2e-connsys-fw || {
+	log "Wi-Fi and Bluetooth stay off: firmware/NVRAM not found in the vendor and nvdata partitions"
+	exit 0
+}
+[ -w /sys/module/firmware_class/parameters/path ] &&
+	printf %s "$FW" >/sys/module/firmware_class/parameters/path
+
+modprobe cfg80211 || log "cfg80211 missing"
+modprobe bluetooth || log "bluetooth missing"
+
+load() {
+	m=$1; shift
+	grep -q "^$m " /proc/modules && return 0
+	insmod "$MOD/$m.ko" "$@" || { log "insmod $m failed"; return 1; }
+}
+
+# Device trees without the LK values: MT6637 A-die, EMI at 0x87e00000, Wi-Fi DMA pool.
+ci=""
+grep -q 6631 $C/compatible 2>/dev/null && ci="conninfra_adie=0x6637"
+[ -e $C/emi-addr ] || ci="$ci conninfra_emi_base=0x87e00000"
+wl=""
+[ -e $P ] && ! grep -q shared-dma-pool $P/compatible 2>/dev/null &&
+	wl="wifi_dma_pool=/reserved-memory/titan-shared-dma-pool-wifi-reserve-memory-dma@88b00000"
+
+load connadp || exit 1
+load conninfra $ci || exit 1
+load wmt_chrdev_wifi_connac2 || exit 1
+load wlan_drv_gen4m_6878 $wl || exit 1
+load bt_drv_6878 || log "Bluetooth driver not loaded"
+
+# Wi-Fi: calibration NVRAM in one write ("WR-BUF:NVRAM" + data), then on in station mode.
+# Power-on waits for the pre-calibration that starts once Wi-Fi and BT registered.
+for i in $(seq 1 50); do [ -c /dev/wmtWifi ] && break; sleep 0.1; done
+python3 -c 'import os,sys; d=open(sys.argv[1],"rb").read(); f=os.open("/dev/wmtWifi",os.O_WRONLY); os.write(f,b"WR-BUF:NVRAM"+d); os.close(f)' \
+	"$FW/WIFI" || log "Wi-Fi NVRAM handover failed"
+echo 1 >/dev/wmtWifi && echo S >/dev/wmtWifi || log "Wi-Fi power on failed"
+
+# Bluetooth: BD address from NVRAM (BT_Addr, first 6 bytes); bluetoothd powers it on.
+if [ -e "$FW/BT_Addr" ]; then
+	a=$(od -An -tx1 -N6 "$FW/BT_Addr" | tr -s ' ' | sed 's/^ //;s/ /:/g')
+	for i in $(seq 1 20); do btmgmt --index 0 info >/dev/null 2>&1 && break; sleep 0.5; done
+	btmgmt --index 0 public-addr "$a" >/dev/null 2>&1 || log "Bluetooth address not set"
+fi
+exit 0

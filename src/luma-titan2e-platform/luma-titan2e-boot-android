@@ -1,0 +1,77 @@
+#!/usr/bin/python3
+# SPDX-License-Identifier: Apache-2.0
+"""Make the bootloader start Android (slot b) on the next boot, then restart.
+
+Rewrites the AOSP bootloader_control block in misc (+2048): slot b gets
+priority 15 and slot a 14, and the active suffix becomes "_b". The block is
+left alone unless its magic and CRC are valid, and is read back after the
+write. To return to Luma: adb reboot bootloader, fastboot set_active a,
+fastboot reboot.
+
+  luma-titan2e-boot-android [--device PATH] [--no-reboot]
+"""
+import argparse
+import glob
+import os
+import struct
+import subprocess
+import sys
+import zlib
+
+OFFSET = 2048
+SIZE = 32
+MAGIC = 0x42414342  # "BCAB"
+SLOT_A, SLOT_B = 12, 14  # slot_metadata: priority:4 tries_remaining:3 successful_boot:1 ...
+
+
+def misc_device() -> str:
+    for uevent in glob.glob("/sys/class/block/*/uevent"):
+        with open(uevent) as f:
+            if "PARTNAME=misc\n" in f.read():
+                return "/dev/" + uevent.split("/")[4]
+    raise SystemExit("no misc partition")
+
+
+def valid(block: bytes) -> bool:
+    return (struct.unpack_from("<I", block, 4)[0] == MAGIC
+            and struct.unpack_from("<I", block, 28)[0] == zlib.crc32(block[:28]))
+
+
+def with_priority(block: bytearray, offset: int, priority: int) -> None:
+    slot = struct.unpack_from("<H", block, offset)[0]
+    struct.pack_into("<H", block, offset, (slot & ~0x0F) | priority)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    parser.add_argument("--device", help="misc partition (default: found by name)")
+    parser.add_argument("--no-reboot", action="store_true", help="only rewrite the block")
+    args = parser.parse_args()
+    device = args.device or misc_device()
+
+    fd = os.open(device, os.O_RDWR | os.O_SYNC)
+    try:
+        os.lseek(fd, OFFSET, os.SEEK_SET)
+        block = bytearray(os.read(fd, SIZE))
+        if len(block) != SIZE or not valid(block):
+            raise SystemExit("misc: no valid boot-control block, leaving it alone")
+        block[0:4] = b"_b\0\0"
+        with_priority(block, SLOT_B, 15)
+        with_priority(block, SLOT_A, 14)
+        struct.pack_into("<I", block, 28, zlib.crc32(block[:28]))
+        os.lseek(fd, OFFSET, os.SEEK_SET)
+        if os.write(fd, block) != SIZE:
+            raise SystemExit("misc: short write")
+        os.fsync(fd)
+        os.lseek(fd, OFFSET, os.SEEK_SET)
+        if os.read(fd, SIZE) != bytes(block):
+            raise SystemExit("misc: read-back differs; not restarting")
+    finally:
+        os.close(fd)
+    print("slot b (Android) starts next")
+    if not args.no_reboot:
+        subprocess.run(["systemctl", "reboot"], check=False)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

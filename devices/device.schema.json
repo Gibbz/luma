@@ -22,10 +22,12 @@
     "fastboot_product": {"type": "string", "pattern": "^[A-Za-z0-9_-]+$"},
     "kernel": {
       "type": "object", "additionalProperties": false,
-      "required": ["tag", "release", "config", "dtb"],
+      "required": ["release", "config", "dtb"],
+      "anyOf": [{"required": ["tag"]}, {"required": ["source"]}],
       "properties": {
         "branch": {"$ref": "#/$defs/slug", "description": "Overrides the SoC's kernel branch."},
         "tag": {"type": "string", "pattern": "^luma-[a-z0-9-]+-[A-Za-z0-9._+-]+$"},
+        "source": {"$ref": "#/$defs/relpath", "description": "JSON in this repository pinning the upstream kernel, patches and config, for a device whose kernel has no tag yet."},
         "release": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+(\\.[0-9]+)?[A-Za-z0-9._+-]*$"},
         "config": {"$ref": "#/$defs/relpath"},
         "dtb": {"type": "string", "pattern": "^[a-z0-9_-]+/[A-Za-z0-9_.,+-]+\\.dtb$"},
@@ -91,7 +93,7 @@
   "allOf": [
     {
       "if": {"properties": {"tier": {"const": "supported"}}},
-      "then": {"required": ["releases", "updates"], "properties": {"releases": {"minItems": 1}}}
+      "then": {"required": ["releases", "updates"], "properties": {"releases": {"minItems": 1}, "kernel": {"required": ["tag"]}}}
     }
   ],
   "$defs": {

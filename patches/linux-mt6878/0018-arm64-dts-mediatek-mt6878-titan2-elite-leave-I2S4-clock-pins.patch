@@ -1,0 +1,24 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Project Luma <builds@project-luma.local>
+Date: Mon, 19 Oct 2026 17:00:00 -0400
+Subject: [PATCH 18/18] arm64: dts: mediatek: mt6878-titan2-elite: leave I2S4
+ clock pins to audio
+
+GPIO42/43 are the speaker amplifier's I2S4 bit and frame clocks. The
+second front-end pin group claimed them for an FEM variant this phone
+does not have; with Wi-Fi on, the vendor kernel leaves them in GPIO mode.
+---
+--- a/arch/arm64/boot/dts/mediatek/mt6878-unihertz-titan2-elite-connsys.dtsi
++++ b/arch/arm64/boot/dts/mediatek/mt6878-unihertz-titan2-elite-connsys.dtsi
+@@ -19,8 +19,10 @@
+ 			pinmux = <0x2101>, <0x2201>, <0x2301>, <0x2401>,
+ 				 <0x2501>, <0xbf03>, <0x2701>, <0x2801>;
+ 		};
++		/* GPIO42/43 stay off this list: stock leaves them in GPIO mode
++		 * with Wi-Fi on, and they are the speaker amp I2S4 BCK/LRCK. */
+ 		pins-wf1 {
+-			pinmux = <0x2906>, <0x2a06>, <0x2b06>,
++			pinmux = <0x2906>,
+ 				 <0xbd03>, <0xc003>, <0xbe03>, <0x2601>;
+ 		};
+ 	};

@@ -1,0 +1,47 @@
+{
+  "device": "Unihertz Titan 2 Elite (MediaTek MT6878)",
+  "repository": "https://github.com/MT6878-mainline/linux.git",
+  "commit": "12f2e9f040d0049f3f5ce5a7e53bf5ef27b46422",
+  "patches": "patches/linux-mt6878",
+  "config": "config/mobile/titan2e-kernel.config",
+  "release": "7.2.0-luma-titan2e-m2-g3a50c30a53fd",
+  "build": "scripts/packages/build-titan2e-kernel.sh",
+  "builtin_dtb": "Build the dtb first and copy it to CONFIG_TITAN2E_BUILTIN_DTB_PATH, then make Image modules (the .incbin is not dependency-tracked).",
+  "initramfs": {
+    "init": "config/mobile/titan2e-initramfs/init",
+    "busybox": {
+      "url": "https://dl.fedoraproject.org/pub/fedora/linux/releases/44/Everything/aarch64/os/Packages/b/busybox-1.37.0-7.fc44.aarch64.rpm",
+      "sha256": "11aee899410a6b301ee332a0f2937c912454d9ccdc52290cfc19ad8e3d92a655",
+      "path": "usr/bin/busybox"
+    }
+  },
+  "boot_image": "Image.lz4 in an Android v4 boot image with an AVB hash footer for the boot partition (boot_a)",
+  "dtb": "mediatek/mt6878-unihertz-titan2-elite.dtb",
+  "boot_partition_size": 67108864,
+  "tools": {
+    "mkbootimg": {
+      "url": "https://android.googlesource.com/platform/system/tools/mkbootimg",
+      "commit": "d2bb0af5ba6d3198a3e99529c97eda1be0b5a093",
+      "path": "mkbootimg.py",
+      "sha256": "37d84b3d162e0bc62e36c1f4e1c63c85ea0caa9f29be023eb2f8efe006ad948c"
+    },
+    "gki_certificate": {
+      "url": "https://android.googlesource.com/platform/system/tools/mkbootimg",
+      "commit": "d2bb0af5ba6d3198a3e99529c97eda1be0b5a093",
+      "path": "gki/generate_gki_certificate.py",
+      "sha256": "1bb1feec68a13da18d581aa2c631798f86f6bc10b55d587b2dd31446a0f8a203"
+    },
+    "avbtool": {
+      "url": "https://android.googlesource.com/platform/external/avb",
+      "commit": "761178607206f4cb2af79ed9eec52d8cbd814adb",
+      "path": "avbtool.py",
+      "sha256": "e5a664a38db623da00f080219bc0ee60a640a9dc4a872803616fae4938ac749b"
+    },
+    "avb_testkey": {
+      "url": "https://android.googlesource.com/platform/external/avb",
+      "commit": "761178607206f4cb2af79ed9eec52d8cbd814adb",
+      "path": "test/data/testkey_rsa2048.pem",
+      "sha256": "f1d5765a2bdfb92fb08aee021107c7ac1a7a3f590dafd853771c85375ef0fbd7"
+    }
+  }
+}

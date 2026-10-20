@@ -22,7 +22,8 @@ class DeviceTree(unittest.TestCase):
                             ignore=shutil.ignore_patterns("__pycache__"))
         (self.root / ".github").mkdir()
         shutil.copy(ROOT / ".github" / "CODEOWNERS", self.root / ".github" / "CODEOWNERS")
-        for name in ("scripts/mobile/fp6-native-init-functions.sh", "config/mobile/fp6-ostree-source.json"):
+        for name in ("scripts/mobile/fp6-native-init-functions.sh", "config/mobile/fp6-ostree-source.json",
+                     "config/mobile/titan2e-kernel-source.json"):
             (self.root / name).parent.mkdir(parents=True, exist_ok=True)
             shutil.copy(ROOT / name, self.root / name)
         self.fp6 = self.root / "devices" / "fairphone" / "fp6"
@@ -123,6 +124,18 @@ class DeviceTree(unittest.TestCase):
         self.edit(self.fp6 / "device.toml", 'tag = "luma-fp6-', 'tag = "luma-fp5-')
         self.assertRejected("kernel.tag must start with 'luma-fp6-'")
 
+    def test_supported_device_kernel_needs_a_tag(self):
+        self.edit(self.fp6 / "device.toml", 'tag = "luma-fp6-', 'source = "config/x.json"\nignored = "luma-fp6-')
+        self.assertRejected("'tag' is a required property")
+
+    def test_kernel_source_must_exist_and_match(self):
+        (self.root / "config").mkdir(exist_ok=True)
+        (self.root / "config" / "pins.json").write_text('{"release": "0.0"}\n')
+        self.edit(self.fp6 / "device.toml", 'tag = "luma-fp6-', 'source = "config/pins.json"\ntag = "luma-fp6-')
+        self.assertRejected("kernel.release does not match config/pins.json")
+        self.edit(self.fp6 / "device.toml", 'source = "config/pins.json"', 'source = "config/missing.json"')
+        self.assertRejected("kernel.source 'config/missing.json' does not exist")
+
     def test_every_device_needs_an_owner(self):
         self.edit(self.root / ".github" / "CODEOWNERS", "/devices/fairphone/fp6/ @nmcmil", "")
         self.assertRejected("no entry for /devices/fairphone/fp6/")
@@ -130,6 +143,15 @@ class DeviceTree(unittest.TestCase):
     def test_device_needs_tests(self):
         shutil.rmtree(self.fp6 / "tests")
         self.assertRejected("missing ['tests']")
+
+    def test_device_may_add_its_readme_and_source_pins(self):
+        for name in ("README.md", "source-pins.json", "public-file-manifest.json"):
+            (self.fp6 / name).write_text("{}\n")
+        self.assertEqual(self.errors(), [])
+
+    def test_unknown_device_file_is_refused(self):
+        (self.fp6 / "NOTES.md").write_text("notes\n")
+        self.assertRejected("unexpected ['NOTES.md']")
 
 
 if __name__ == "__main__":
