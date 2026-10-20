@@ -41,6 +41,14 @@ trap cleanup EXIT INT TERM
 mkdir -p "$rpmbuild_dir"/{BUILD,BUILDROOT,RPMS,SOURCES,SPECS,SRPMS} "$source_dir" \
   "$rpmbuild_dir/SOURCES/dependencies"
 install -m 0644 "$platform_rpm" "$rpmbuild_dir/SOURCES/dependencies/"
+# Core's native checks import the installed application service. Keep the
+# existing BuildRequires reproducible outside a pre-populated builder.
+installer_rpm="$repo_root/build/packages/luma-application-installer/RPMS/noarch/$LUMA_APPLICATION_INSTALLER_NEVRA.rpm"
+[ -f "$installer_rpm" ] || {
+  printf 'error: build the pinned application installer first: %s\n' "$installer_rpm" >&2
+  exit 1
+}
+install -m 0644 "$installer_rpm" "$rpmbuild_dir/SOURCES/dependencies/"
 # Luma-built packages Fedora does not ship: the Python modules the Connect
 # checks import, and the Prairie icon theme the Messages list checks its glyphs
 # against. Each is built from its own spec first.
