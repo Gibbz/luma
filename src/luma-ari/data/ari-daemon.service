@@ -11,4 +11,7 @@ ExecStart=/usr/libexec/luma-ari/ari-daemon
 Restart=on-failure
 # Ari never runs as root and holds no special privilege (brief §7.2 rule 4).
 NoNewPrivileges=yes
-PrivateTmp=yes
+# A user-service mount sandbox also creates a private user namespace.
+# Stay in the host user namespace so signed Flatpak caller verification can
+# inspect the live proxy identity and lifecycle pipe in /proc.
+# Keep this service unprivileged; do not add mount-namespace sandbox options.
