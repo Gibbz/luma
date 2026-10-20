@@ -2,7 +2,7 @@
 
 Name:           luma-ari
 Version:        0.1.0
-Release:        1.luma.18.creator20261019.2%{?dist}
+Release:        1.luma.19.creator20261019.3%{?dist}
 Summary:        Luma's assistant, running an open model on this computer
 License:        Apache-2.0
 URL:            https://projectluma.org/apps/ari
@@ -84,6 +84,9 @@ PYTHONPATH=%{buildroot}%{python3_sitelib} XDG_CONFIG_HOME="$native_home/config" 
 %{_userunitdir}/ari-daemon.service
 
 %changelog
+* Tue Oct 20 2026 Project Luma <maintainers@projectluma.org> - 0.1.0-1.luma.19.creator20261019.3
+- Export the assistant interface before accepting activated requests.
+
 * Tue Oct 20 2026 Project Luma <maintainers@projectluma.org> - 0.1.0-1.luma.18.creator20261019.2
 - Allow the user service to verify signed Ari model-download requests.
 

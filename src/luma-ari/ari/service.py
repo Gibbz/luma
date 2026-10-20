@@ -741,7 +741,9 @@ class Daemon:
 
         def lost(_connection, _name) -> None:
             loop.quit()
-        Gio.bus_own_name(Gio.BusType.SESSION, BUS_NAME, Gio.BusNameOwnerFlags.NONE, None, acquired, lost)
+        # Export the interface before claiming the name. D-Bus delivers queued
+        # activation calls as soon as ownership is granted.
+        Gio.bus_own_name(Gio.BusType.SESSION, BUS_NAME, Gio.BusNameOwnerFlags.NONE, acquired, None, lost)
         GLib.timeout_add_seconds(5, self._watch, loop)
         try:
             loop.run()
