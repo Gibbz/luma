@@ -62,6 +62,39 @@ INITIAL_EFI_DEPLOY = '''def _luma_initial_efi_deploy(physroot, argv):
 '''
 
 
+INSTALL_BOOTUPD = '''def _luma_firmware_order():
+    rc, output = execProgram("efibootmgr", [])
+    if rc:
+        raise BootloaderInstallationError("Could not read the current EFI startup order")
+    order = next((line.split(":", 1)[1].strip().split(",")
+                  for line in output.splitlines() if line.startswith("BootOrder:")), None)
+    if not order or any(len(item) != 4 or any(c not in "0123456789abcdefABCDEF" for c in item)
+                        for item in order):
+        raise BootloaderInstallationError("The current EFI startup order is unavailable")
+    return [item.upper() for item in order]
+
+
+def _luma_install_bootupd(sysroot, argv, keep_boot_order):
+    # A named Luma entry avoids shim's generic fallback, which can rebuild and
+    # reorder every vendor's entries on first boot. Register our entry normally,
+    # then retain all existing priorities and append any newly created entry.
+    preserve = keep_boot_order and STORAGE.get_proxy(BOOTLOADER).IsEFI()
+    previous = _luma_firmware_order() if preserve else None
+    if preserve and "--update-firmware" not in argv:
+        argv = [*argv, "--update-firmware"]
+    try:
+        return execWithRedirect("bootupctl", argv, root=sysroot)
+    finally:
+        if previous is not None:
+            current = _luma_firmware_order()
+            order = [entry for entry in previous if entry in current]
+            order.extend(entry for entry in current if entry not in order)
+            safe_exec_program("efibootmgr", ["--bootorder", ",".join(order)])
+
+
+'''
+
+
 def patched_source(data):
     if hashlib.sha256(data).hexdigest() != UPSTREAM_SHA256:
         raise ValueError("unsupported Anaconda RTC initialization source")
@@ -91,7 +124,7 @@ def patched_pull_source(data):
     before = "class DeployOSTreeTask(Task):\n"
     if text.count(before) != 1:
         raise ValueError("unsupported Anaconda initial deployment owner")
-    text = text.replace(before, INITIAL_EFI_DEPLOY + before, 1)
+    text = text.replace(before, INITIAL_EFI_DEPLOY + INSTALL_BOOTUPD + before, 1)
     before = '''            log.info("ostree admin deploy starting")
             safe_exec_program(
                 "ostree",
@@ -102,6 +135,26 @@ def patched_pull_source(data):
             _luma_initial_efi_deploy(
                 self._physroot,
 ''', 1)
+    before = '''        rc = execWithRedirect(
+            "bootupctl",
+'''
+    if text.count(before) != 1:
+        raise ValueError("unsupported Anaconda bootupd installation boundary")
+    text = text.replace(before, '''        rc = _luma_install_bootupd(
+            self._sysroot,
+''', 1)
+    before = '''            root=self._sysroot
+        )
+
+        if rc:
+            raise BootloaderInstallationError('''
+    if text.count(before) != 1:
+        raise ValueError("unsupported Anaconda bootupd result boundary")
+    text = text.replace(before, '''            bootloader.KeepBootOrder
+        )
+
+        if rc:
+            raise BootloaderInstallationError(''', 1)
     ast.parse(text)
     return text.encode()
 

@@ -89,5 +89,57 @@ class InitialEFIDeployment(unittest.TestCase):
             self.assertFalse(any("set" in call and "sysroot.bootloader" in call for call in calls))
 
 
+class PreservedEFIStartup(unittest.TestCase):
+    def exercise(self, *, efi=True, preserve=True, result=0, raise_install=False):
+        tree = ast.parse(PATCH.patched_pull_source(UPSTREAM).decode())
+        tree.body = [node for node in tree.body if getattr(node, "name", "") in
+                     ("safe_exec_program", "_luma_firmware_order", "_luma_install_bootupd")]
+        order = ["000A", "0009", "0003"]
+        calls = []
+        def execute(command, argv, **kwargs):
+            calls.append((command, argv))
+            if argv == []:
+                return 0, "BootOrder: " + ",".join(order) + "\n"
+            if argv[0] == "--bootorder":
+                order[:] = argv[1].split(",")
+                return 0, ""
+            raise AssertionError(argv)
+        def install(command, argv, **kwargs):
+            calls.append((command, argv))
+            if "--update-firmware" in argv:
+                order.insert(0, "000B")
+            if raise_install:
+                raise RuntimeError("bootupd failed")
+            return result
+        namespace = dict(execProgram=execute, execWithRedirect=install,
+                         STORAGE=SimpleNamespace(get_proxy=lambda _: SimpleNamespace(IsEFI=lambda: efi)),
+                         BOOTLOADER="bootloader", BootloaderInstallationError=RuntimeError,
+                         PayloadInstallationError=RuntimeError)
+        exec(compile(tree, "native-bootupd-install", "exec"), namespace)
+        try:
+            returned = namespace["_luma_install_bootupd"]("/sysroot", ["backend", "install", "--auto", "/"], preserve)
+        except RuntimeError:
+            if not raise_install: raise
+            returned = None
+        return order, calls, returned
+
+    def test_registers_named_entry_after_existing_priorities(self):
+        order, calls, result = self.exercise()
+        self.assertEqual(order, ["000A", "0009", "0003", "000B"])
+        self.assertEqual(result, 0)
+        self.assertIn("--update-firmware", next(argv for cmd, argv in calls if cmd == "bootupctl"))
+
+    def test_restores_order_after_failed_bootupd(self):
+        for options in ({"result": 1}, {"raise_install": True}):
+            order, _, _ = self.exercise(**options)
+            self.assertEqual(order, ["000A", "0009", "0003", "000B"])
+
+    def test_ordinary_or_bios_install_does_not_intercept_firmware(self):
+        for options in ({"preserve": False}, {"efi": False}):
+            _, calls, _ = self.exercise(**options)
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(calls[0][0], "bootupctl")
+
+
 if __name__ == "__main__":
     unittest.main()
