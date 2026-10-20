@@ -20,6 +20,7 @@ fi
 if [ ! -f "$base_image" ]; then
   "$repo_root/scripts/build-track-a.sh"
 fi
+"$repo_root/scripts/packages/build-figtree-fonts.sh"
 "$repo_root/scripts/packages/build-gnome-shell.sh"
 "$repo_root/scripts/packages/build-gnome-control-center.sh"
 "$repo_root/scripts/packages/build-gtk4.sh"
@@ -46,7 +47,6 @@ fi
 "$repo_root/scripts/packages/build-luma-mods.sh"
 "$repo_root/scripts/packages/build-luma-update.sh"
 "$repo_root/scripts/packages/build-backgrounds.sh"
-"$repo_root/scripts/packages/build-figtree-fonts.sh"
 "$repo_root/scripts/packages/build-caveat-fonts.sh"
 "$repo_root/scripts/packages/build-plymouth.sh"
 "$repo_root/scripts/packages/build-boot-theme.sh"

@@ -365,6 +365,16 @@ install -m 0644 "$repo_root/scripts/packages/verify-shell-search-theme.py" "$rpm
 install -m 0644 "$repo_root/tools/check-shell-veil.py" "$rpmbuild_dir/SOURCES/"
 install -m 0644 "$repo_root/config/shared/design-tokens.json" "$rpmbuild_dir/SOURCES/"
 
+# The packaged clock-width regression shapes the actual pinned Figtree font.
+# Admit this normal build prerequisite explicitly rather than accepting a
+# substitute font from the builder's ambient Fontconfig configuration.
+figtree_rpm="$repo_root/build/packages/figtree-fonts/RPMS/noarch/$FIGTREE_NEVRA.rpm"
+[ -f "$figtree_rpm" ] || {
+  printf 'error: build %s before Shell: %s\n' "$FIGTREE_NEVRA" "$figtree_rpm" >&2
+  exit 1
+}
+install -m 0644 "$figtree_rpm" "$rpmbuild_dir/SOURCES/"
+
 (
   cd "$rpmbuild_dir/SPECS"
   # Inside a Git work tree (a build tree that is a clone, not an rsync) git
@@ -395,7 +405,7 @@ install -m 0644 "$repo_root/config/shared/design-tokens.json" "$rpmbuild_dir/SOU
       printf "VERIFY FAILED at line %s: %s\n" "$1" "$2" >&2
     }
     trap "luma_verify_failed \$LINENO \"\$BASH_COMMAND\"" ERR
-    dnf5 -y install rpm-build dnf5-plugins
+    dnf5 -y install rpm-build dnf5-plugins SOURCES/google-figtree-fonts-*.rpm
     dnf5 -y builddep SPECS/gnome-shell.spec
     rpmbuild -ba --noclean --define "_lto_cflags -flto=2" --define "_topdir $PWD" SPECS/gnome-shell.spec
 
